@@ -1,0 +1,564 @@
+---
+output:
+  html_document: default
+  pdf_document: default
+---
+
+---
+title: "Test of whether kinetic constants can be obtained with BioMark"
+output: html_notebook
+---
+
+Copyright (C) 2020  Martin Engqvist Lab
+
+
+
+
+## Experiment
+.....
+
+Experimental data collected on ?????? (DDMMYY) in in a plate reader.
+
+Assay conditions, oxidases:
+
+
+20mM HEPES, pH 7.4
+
+50uM Amplex Red
+
+0,1U/ml HRP
+
+
+
+```{r setup}
+
+#make sure the packages are installed
+wants <- c('dplyr', 'reshape2', 'ggplot2', 'tidyverse', 'assertthat')
+has   <- wants %in% rownames(installed.packages())
+if(any(!has)) install.packages(wants[!has], repos="http://ftp.acc.umu.se/mirror/CRAN/")
+
+#load all the packages
+lapply(wants, require, character.only = TRUE)
+
+
+#find the "code" directory, this should be one folder away from the project root
+while (basename(getwd()) != 'code'){
+  setwd("../")
+  if (getwd() == '/'){
+    quit(status = 1)
+  }
+}
+
+#go one folder up and set as project root directory
+setwd("../")
+PROJ <- getwd()
+setwd(paste0(PROJ, '/data/'))
+
+#set folder paths relative to the project root
+CURRENT <- getwd()
+DATA <- getwd()
+RAW_EXTERNAL <- paste0(DATA, '/raw_external/')
+RAW_INTERNAL <- paste0(DATA, '/raw_internal/')
+INTERMEDIATE = paste0(DATA, '/intermediate/')
+FINAL = paste0(DATA, '/final/')
+
+RESULTS <- paste0(PROJ, '/results/')
+FIGURES <- paste0(RESULTS, 'figures/')
+PICTURES <- paste0(RESULTS, 'pictures/')
+
+```
+
+
+## Define variables specific for this plate and array
+```{r}
+THIS_PROJECT_FOLDER <- 'plate_km_test'
+REPEAT <- 1
+ROX_DATA <- 'GlucOX_data_rep1.tsv'
+FAM_DATA <- 'zero_fam_data.tsv'
+
+MINUTES_PER_CYCLE <- 0.5 # how many minutes elapse between each cycle
+
+R2_CUTOFF <- 0.8
+CORR_CUTOFF <- 0.8
+TOLERANCE_AT_ZERO <- 0.05
+TOLERANCE_AT_VMAX <- 0.05
+
+SLOPE_FIRST_TIMEPOINT <- 1
+SLOPE_LAST_TIMEPOINT <- 24
+
+
+# load helper functions
+source(paste0(PROJ, '/code/', 'flex_six_helper_functions.R'))
+print(paste0('helper script version: ', VERSION))
+```
+
+
+Setup plotting preferences
+
+```{r}
+font_size = 7
+plt_height = 65
+plt_width = 89
+line_size = 0.5
+line_width <- 0.5
+error_size = 0.25
+pd = position_dodge(0.9)
+
+gen_col = '#141A46'
+nat_col = '#EC8B5E'
+neg_col = '#868686'
+
+
+
+ggplot_theme <- theme(text = element_text( size=font_size), 
+                      axis.text.x = element_text(angle = 0, hjust = 1, size=font_size),
+                      axis.text.y = element_text(size=font_size),
+                      axis.line = element_line(color = "black", size=line_size),
+                      axis.ticks.x = element_line(color = 'black', size=line_size),
+                      axis.ticks.y = element_line(color = 'black', size=line_size),
+                      #legend.text = element_text( size=font_size),
+                      legend.position = c(0, 1),
+                      legend.justification = c(0, 1),
+                      legend.background = element_blank(),
+                      legend.direction = 'horizontal',
+                      legend.text=element_text(size=font_size),
+                      plot.title = element_text( size=font_size),
+                      panel.background = element_blank(),
+                      panel.border = element_rect(color = 'black', size=line_size),
+                      #panel.margin = 
+                      panel.grid.major = element_blank(), 
+                      panel.grid.minor = element_blank(),
+                      panel.grid.major.x = element_blank(), 
+                      panel.grid.major.y = element_blank(), 
+                      panel.grid.minor.x = element_blank(), 
+                      panel.grid.minor.y = element_blank() 
+)
+```
+
+## Setup
+
+Let's input the experimental paramenters for sample and assay sides
+
+```{r}
+assay.df <- read.table(paste(INTERMEDIATE, THIS_PROJECT_FOLDER, 'GlucOX_assay.tsv', sep='/'), sep='\t', header=TRUE, na.strings="")
+
+sample.df <- read.table(paste(INTERMEDIATE, THIS_PROJECT_FOLDER, 'GlucOX_sample.tsv', sep='/'), sep='\t', header=TRUE, na.strings="")
+
+
+print(assay.df)
+print(sample.df)
+```
+
+
+
+
+"Mix" the wells from input assay and sample data to do in silico what happens in the chip
+
+```{r}
+mixed.df <- mix_wells(assay.df, sample.df)
+
+head(mixed.df)
+tail(mixed.df)
+```
+
+
+
+
+## Load data
+
+
+```{r}
+# read the experimental data obtained from the BioMark
+rox.df <- read.table(paste(INTERMEDIATE, THIS_PROJECT_FOLDER, ROX_DATA, sep='/'), sep='\t', header=TRUE, na.strings="")
+fam.df <- read.table(paste(INTERMEDIATE, THIS_PROJECT_FOLDER, FAM_DATA, sep='/'), sep='\t', header=TRUE, na.strings="")
+
+# combine data 
+all.df <- combine_data(mixed.df, rox.df, fam.df)
+
+# Add in the time at which each read took place
+all.df$minutes <- all.df$cycle * MINUTES_PER_CYCLE
+
+head(all.df)
+```
+
+
+
+Take a look at the frame and remove NA if required
+
+```{r}
+summary(all.df)
+
+# replace all na values with zero to allow for analysis despite missing values
+all.df[is.na(all.df)] <- 0
+
+```
+
+
+
+Let's export this to a flatfile for future use.
+
+```{r}
+write.table(all.df, file=paste(FINAL, THIS_PROJECT_FOLDER, sprintf('%s_384-well_plate_rep%s_final_data.tsv', gsub(' ', '_', unique(all.df$assay_enzyme)), REPEAT), sep='/'), sep='\t', row.names=FALSE)
+```
+
+
+
+## Plotting results
+Time to plot!
+
+
+Plot rox and fam values of first and last cycle
+
+```{r}
+
+plot_raw_data_heatmaps(all.df, min=0, max=65000)
+
+```
+
+
+
+
+First we plot the raw kinetics observed in all the wells
+
+```{r}
+ggplot(all.df, aes(x=minutes, y=rox_value, color=factor(final_substrate_conc)))+
+    theme_bw() +
+    geom_point(cex=0.5) + 
+    ggtitle('Raw data measured over time') +
+    xlab('Time (minutes)') + 
+    ylab('Fluorescence') +
+    facet_grid(cols=vars(sample_substrate), rows=vars(assay_enzyme, final_enzyme_conc))
+
+```
+
+
+
+
+Subtract fluorescence from the no enzyme control
+
+```{r}
+# remove fluorescence from the no enzyme control
+all.df <- subtract_no_enz_fluorescence(all.df)
+
+head(all.df)
+
+in_data <- all.df
+ggplot(in_data, aes(x=minutes, y=rox_value_norm, color=factor(final_substrate_conc)))+
+    theme_bw() +
+    geom_point(cex=0.5) + 
+    ggtitle('Raw data measured over time') +
+    xlab('Time (minutes)') + 
+    ylab(sprintf('Resorufin concentration (%s)', unique(in_data$resorufin_value_norm_unit))) +
+    facet_grid(cols=vars(sample_substrate), rows=vars(assay_enzyme, final_enzyme_conc))
+
+```
+
+
+Convert fluorescence to concentration of product using standard curve
+
+```{r}
+concentration.df <- fluorescence_to_concentration(all.df, chip_type='plate')
+
+head(concentration.df)
+
+in_data <- concentration.df
+ggplot(in_data, aes(x=minutes, y=resorufin_value_norm, color=factor(final_substrate_conc)))+
+    theme_bw() +
+    geom_point(cex=0.5) + 
+    ggtitle('Raw data measured over time') +
+    xlab('Time (minutes)') + 
+    ylab(sprintf('Resorufin concentration (%s)', unique(in_data$resorufin_value_unit))) +
+    facet_grid(cols=vars(sample_substrate), rows=vars(assay_enzyme, final_enzyme_conc))
+
+```
+
+
+
+
+Make a subset which should be the linear range, plot again
+
+```{r}
+all.df.slope.subset <- concentration.df[concentration.df$minutes >= SLOPE_FIRST_TIMEPOINT & concentration.df$minutes <= SLOPE_LAST_TIMEPOINT, ]
+
+in_data <- all.df.slope.subset
+ggplot(in_data, aes(x=minutes, y=resorufin_value_norm, color=factor(final_substrate_conc)))+
+    theme_bw() +
+    geom_point(cex=0.5) + 
+    ggtitle('Raw data measured over time') +
+    xlab('Time (minutes)') + 
+    ylab(sprintf('Resorufin concentration (%s)', unique(in_data$resorufin_value_unit))) +
+    facet_grid(cols=vars(sample_substrate), rows=vars(assay_enzyme, final_enzyme_conc))
+
+```
+
+
+
+
+
+Fit a linear regression for all data between the first and last points to get the slope.
+
+```{r}
+# Fit a linear regression for all data between the first and last points to get the slope.
+slopes.df <- compute_slopes(all.df.slope.subset)
+
+head(slopes.df)
+tail(slopes.df)
+```
+
+
+
+
+A look at the slope data as a heatmap and assess the fit of the linear model.
+
+```{r}
+
+### Plotting slope data and the fit of the model
+
+plot_slope_data_heatmaps(slopes.df)
+
+
+```
+
+
+
+
+Remove all enzyme concentrations that have poor R2 values (below a set cutoff)
+
+```{r}
+
+bundled.slopes.nonegs.df <- filter_r2(slopes.df, r2_cutoff=R2_CUTOFF, corr_cutoff=CORR_CUTOFF)
+
+
+head(bundled.slopes.nonegs.df)
+```
+
+
+
+
+Calculate spearman correlation between substrate concentration and the measured slope (the kinetic slope)
+
+```{r}
+
+bundled.slopes.nonegs.spearman.df <- calculate_slope_and_substrate_correlation(bundled.slopes.nonegs.df)
+
+# look at the data
+head(bundled.slopes.nonegs.spearman.df)
+
+# plot it
+barplot(bundled.slopes.nonegs.spearman.df$slope_spearman_rho, 
+        names=interaction(bundled.slopes.nonegs.spearman.df$final_enzyme_conc, c('repeat'), bundled.slopes.nonegs.spearman.df$repeat_num),
+        ylim=c(-1, 1),
+        xlab='final_enzyme_conc',
+        ylab='spearman rho',
+        main='Which enzyme conc. is best?\n(corr. of substrate conc. and kinetic slope)',
+        las=3)
+
+```
+
+
+
+
+For each repeat choose the enzyme concentration with maximal spearman rho
+
+```{r}
+
+bundled.slopes.nonegs.spearman.max.df <- select_best_samples(bundled.slopes.nonegs.spearman.df)
+
+# look at the data
+head(bundled.slopes.nonegs.spearman.max.df)
+
+# plot it
+barplot(bundled.slopes.nonegs.spearman.max.df$slope_spearman_rho, 
+        names=interaction(bundled.slopes.nonegs.spearman.max.df$final_enzyme_conc, c('repeat'), bundled.slopes.nonegs.spearman.max.df$repeat_num),
+        ylim=c(-1, 1),
+        xlab='final_enzyme_conc',
+        ylab='spearman rho',
+        main='Selected enzyme concentrations',
+        las=3)
+```
+
+
+
+
+Unbundle the dataset (turn the lists into column values again)
+
+```{r}
+
+bundled.slopes.nonegs.spearman.max.filtered.unbundled.df <- unbundle_data(bundled.slopes.nonegs.spearman.max.df)
+
+head(bundled.slopes.nonegs.spearman.max.filtered.unbundled.df)
+```
+
+
+
+
+Subtract the zero substrate slope from all others
+
+```{r}
+# Subtract the zero substrate slope from all others
+final.data.df <- subtract_no_substrate_slope(bundled.slopes.nonegs.spearman.max.filtered.unbundled.df)
+
+# look at the data 
+head(final.data.df)
+
+# plot it
+in_data <- final.data.df
+ggplot(in_data, aes(x=final_substrate_conc, y=activity))+
+    theme_bw() +
+    geom_point(cex=0.5) + 
+    ggtitle(sprintf('Activity, repeat %s, background-subtracted data', REPEAT)) +
+    xlab(sprintf('Substrate concentration (%s)', unique(in_data$final_substrate_unit))) + 
+    ylab(sprintf('Activity (%s)', unique(in_data$activity_unit))) +
+    facet_grid(cols=vars(sample_substrate), rows=vars(assay_enzyme, final_enzyme_conc))
+
+
+```
+
+
+
+Need to convert from uM per minute to micro moles per minute
+
+```{r}
+final.data.moles.df <-concentration_to_moles(final.data.df, chip_type='plate')
+
+head(final.data.moles.df)
+```
+
+
+
+Normalize to per mg protein
+```{r}
+final.data.moles.protein.df <- normalize_to_protein(final.data.moles.df, chip_type='plate')
+
+head(final.data.moles.protein.df)
+```
+
+
+Make a plot of the new values
+```{r}
+# plot it
+in_data <- final.data.moles.protein.df
+ggplot(in_data, aes(x=final_substrate_conc, y=activity_moles_protein))+
+    theme_bw() +
+    geom_point(cex=0.5) + 
+    ggtitle(sprintf('Activity, repeat %s', REPEAT)) +
+    xlab(sprintf('Substrate concentration (%s)', unique(sample.df$sample_substrate_unit))) + 
+    ylab(sprintf('Activity (%s)', unique(in_data$activity_moles_protein_unit))) +
+    facet_grid(cols=vars(sample_substrate), rows=vars(assay_enzyme, final_enzyme_conc))
+
+
+```
+
+
+
+
+Trim off bad values at the very low and very high substrate concentrations
+```{r}
+
+# Remove bad values (low concentrations where no activity is seen, and high values where activity drops below max)
+final.data.filtered.both.df <- trim_data_range(final.data.moles.protein.df, tolerance_at_zero=TOLERANCE_AT_ZERO, tolerance_at_max=TOLERANCE_AT_VMAX)
+
+# look at the data
+head(final.data.filtered.both.df)
+
+
+# plot it
+in_data <- final.data.filtered.both.df
+ggplot(in_data, aes(x=final_substrate_conc, y=activity_moles_protein))+
+    theme_bw() +
+    geom_point(cex=0.5) + 
+    ggtitle(sprintf('Selected linear range, repeat %s, filtered data', REPEAT)) +
+    xlab(sprintf('Substrate concentration (%s)', unique(sample.df$sample_substrate_unit))) + 
+    ylab(sprintf('Activity (%s)', unique(in_data$activity_moles_protein_unit))) +
+    facet_grid(cols=vars(sample_substrate), rows=vars(assay_enzyme, final_enzyme_conc))
+
+
+
+```
+
+
+
+Get rid of extreme outliers
+
+```{r}
+# remove extreme outliers
+final.data.filtered.both.no_outliers.df <- remove_outliers(final.data.filtered.both.df)
+
+# look at the data
+head(final.data.filtered.both.no_outliers.df)
+
+
+# plot it
+ggplot(final.data.filtered.both.no_outliers.df, aes(x=final_substrate_conc, y=activity_moles_protein))+
+    theme_bw() +
+    geom_point(cex=0.5) + 
+    ggtitle(sprintf('Selected linear range, repeat %s, outliers removed', REPEAT)) +
+    xlab(sprintf('Substrate concentration (%s)', unique(in_data$final_substrate_unit))) + 
+    ylab(sprintf('Activity (%s)', unique(in_data$activity_moles_protein_unit))) +
+    facet_grid(cols=vars(sample_substrate), rows=vars(assay_enzyme, final_enzyme_conc))
+
+```
+
+
+
+Export for future use
+
+```{r}
+write.table(final.data.filtered.both.no_outliers.df, file=paste(FINAL, THIS_PROJECT_FOLDER, sprintf('%s_384-well_plate_rep%s_final_data.tsv', gsub(' ', '_', unique(all.df$assay_enzyme)), REPEAT), sep='/'), sep='\t', row.names=FALSE)
+```
+
+
+
+
+Plot slope vs substrate concentration, estimate Km and Vmax by fitting to the Michaelis-Menten equation
+
+```{r}
+
+kinetic_data <- calculate_kinetics(final.data.filtered.both.no_outliers.df)
+mm_fit.df <- data.frame(xFit=kinetic_data$xFit, yFit=kinetic_data$yFit)
+km <- kinetic_data[[3]]
+vmax <- kinetic_data[[4]]
+
+
+in_data <- final.data.filtered.both.no_outliers.df
+
+p1 <- ggplot(in_data, aes(x=final_substrate_conc, y=activity_moles_protein))+
+    theme_bw() +
+    ggplot_theme +
+    geom_point(cex=1.5, fill='red', color='red') + 
+    geom_line(data=mm_fit.df, aes(x=xFit, y=yFit)) + 
+    ggtitle(sprintf('Km plot, 384-well plate repeat %s', REPEAT)) +
+    xlab(sprintf('%s (%s)', unique(in_data$sample_substrate), unique(in_data$final_substrate_unit))) + 
+    ylab( expression(paste('Activity (', mu, 'mol mg'^{-1}, 'min'^{-1}, ')') ) ) +
+
+    annotate("text", 
+            x = min(in_data$final_substrate_conc) + max(in_data$final_substrate_conc)*0.2, 
+            y = min(in_data$activity_moles_protein) + max(in_data$activity_moles_protein)*0.05, 
+            label = as.expression(bquote(italic(V)[max] ~ '=' ~ .(formatC(vmax, format='g', digits=2)) ~ mu * 'mol mg'^{-1} ~ 'min'^{-1})), 
+            size=2,
+            hjust=0,
+            vjust=0) +
+  
+    annotate("text", 
+             x = min(in_data$final_substrate_conc) + max(in_data$final_substrate_conc)*0.2, 
+             y = min(in_data$activity_moles_protein) + max(in_data$activity_moles_protein)*0.15, 
+             label = as.expression(bquote(italic(K)[M] ~ '=' ~ .(formatC(km, format='g', digits=2)) ~ 'mM')), 
+             size=2,
+             hjust=0,
+             vjust=0) + 
+  
+    facet_grid(cols=vars(sample_substrate), rows=vars(assay_enzyme))
+
+
+p1
+
+# save the figure
+fname = paste(FIGURES, sprintf('%s_384-well_plate_rep%s_final_data.pdf', gsub(' ', '_', unique(all.df$assay_enzyme)), REPEAT), sep='/')
+ggsave(filename=fname, plot=p1, width = 65*length(unique(sample.df$sample_substrate)), height = 50*length(unique(assay.df$assay_enzyme)), units=c('mm'))
+
+
+# save the km and kcat
+
+```
+
+

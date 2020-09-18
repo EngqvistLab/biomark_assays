@@ -1,0 +1,670 @@
+---
+output:
+  html_document: default
+  pdf_document: default
+---
+
+---
+title: "Test of whether kinetic constants can be obtained with BioMark using the 96x96 chip"
+output: html_notebook
+---
+
+Copyright (C) 2019  Martin Engqvist Lab
+
+
+
+
+## Experiment
+.....
+
+Experimental data collected on xxxxxx (DDMMYY) in Petter Wolls group at Karolinska using a BioMark instrument.
+
+Assay conditions, oxidases:
+
+
+20mM HEPES, pH 7.4
+
+50uM Amplex Red
+
+0,1U/ml HRP
+
+0,1uM fluorescein
+
+0,01mg/ml BSA
+
+0,01% Triton-X-100 and Tween20
+
+1x enzyme concentration: 1,5mg/ml
+
+```{r setup}
+
+#make sure the packages are installed
+wants <- c('dplyr', 'reshape2', 'ggplot2', 'tidyverse')
+has   <- wants %in% rownames(installed.packages())
+if(any(!has)) install.packages(wants[!has], repos="http://ftp.acc.umu.se/mirror/CRAN/")
+
+#load all the packages
+lapply(wants, require, character.only = TRUE)
+
+
+#find the "code" directory, this should be one folder away from the project root
+while (basename(getwd()) != 'code'){
+  setwd("../")
+  if (getwd() == '/'){
+    quit(status = 1)
+  }
+}
+
+#go one folder up and set as project root directory
+setwd("../")
+PROJ <- getwd()
+setwd(paste0(PROJ, '/data/'))
+
+#set folder paths relative to the project root
+CURRENT <- getwd()
+DATA <- getwd()
+RAW_EXTERNAL <- paste0(DATA, '/raw_external/')
+RAW_INTERNAL <- paste0(DATA, '/raw_internal/')
+INTERMEDIATE = paste0(DATA, '/intermediate/')
+FINAL = paste0(DATA, '/final/')
+
+RESULTS <- paste0(PROJ, '/results/')
+FIGURES <- paste0(RESULTS, 'figures/')
+PICTURES <- paste0(RESULTS, 'pictures/')
+
+```
+
+
+## Define variables specific for this plate and array
+```{r}
+THIS_PROJECT_FOLDER <- 'Biomark_16072019_data'
+DATA_FOLDER <- '1.1.3.15_96.96'
+FAM_DATA <- '96x96_assay_fam.tsv'
+ROX_DATA <- '96x96_assay_rox.tsv'
+
+R2_CUTOFF <- 0.8
+TOLERANCE_AT_ZERO <- 0.05
+TOLERANCE_AT_VMAX <- 0.05
+
+```
+
+
+## Setup
+
+Let's input the experimental paramenters for sample and assay sides
+
+```{r}
+assay.df <- read.table(paste(INTERMEDIATE, THIS_PROJECT_FOLDER, DATA_FOLDER, '1362478106_96x96_assay_side.tsv', sep='/'), sep='\t', header=TRUE)
+
+sample.df <- read.table(paste(INTERMEDIATE, THIS_PROJECT_FOLDER, DATA_FOLDER, '1362478106_96x96_sample_side.tsv', sep='/'), sep='\t', header=TRUE)
+
+
+print(assay.df)
+print(sample.df)
+```
+
+
+
+
+
+```{r}
+# make all combinations of wells
+mixed.df <- expand.grid(sample.df$sample_well, assay.df$assay_well)
+
+# fix the colnames
+colnames(mixed.df) <- c('sample_well', 'assay_well')
+
+# add in the original data
+mixed.df <- merge(mixed.df, sample.df, by='sample_well')
+mixed.df <- merge(mixed.df, assay.df, by='assay_well')
+
+
+# calculate final concentrations of things
+mixed.df$final_well <- paste(mixed.df$sample_well, mixed.df$assay_well, sep='-')
+
+mixed.df$final_substrate_name <- mixed.df$sample_substrate_name
+mixed.df$final_substrate_conc <- mixed.df$sample_substrate_conc/1.1
+mixed.df$final_substrate_unit <- mixed.df$sample_substrate_unit
+
+mixed.df$final_enzyme_name <- mixed.df$assay_enzyme_name
+mixed.df$final_enzyme_conc <- mixed.df$assay_enzyme_conc/10
+mixed.df$final_enzyme_unit <- mixed.df$assay_enzyme_unit
+
+head(mixed.df)
+tail(mixed.df)
+```
+
+
+
+
+## Load data
+
+
+```{r}
+# read the experimental data obtained from the BioMark
+rox.df <- read.table(paste(INTERMEDIATE, THIS_PROJECT_FOLDER, DATA_FOLDER, ROX_DATA, sep='/'), sep='\t', header=TRUE)
+fam.df <- read.table(paste(INTERMEDIATE, THIS_PROJECT_FOLDER, DATA_FOLDER, FAM_DATA, sep='/'), sep='\t', header=TRUE)
+
+# convert to long format
+rox.df.long <- melt(rox.df, id=c('Chamber.ID')) 
+colnames(rox.df.long) <- c('final_well', 'cycle', 'rox_value')
+rox.df.long$cycle <- as.integer(gsub('X', '', rox.df.long$cycle))
+
+fam.df.long <- melt(fam.df, id=c('Chamber.ID')) 
+colnames(fam.df.long) <- c('final_well', 'cycle', 'fam_value')
+fam.df.long$cycle <- as.integer(gsub('X', '', fam.df.long$cycle))
+
+
+# Add the data into my frame with concentration info
+all.df <- merge(fam.df.long, rox.df.long, by=c('final_well', 'cycle'))
+all.df <- merge(all.df, mixed.df, by=c('final_well'))
+
+head(all.df)
+```
+
+
+Let's export this to a flatfile for future use.
+
+
+```{r}
+write.table(all.df, file=paste(FINAL, THIS_PROJECT_FOLDER, DATA_FOLDER, '96x96_all_data_combined.tsv', sep='/'), sep='\t', row.names=FALSE)
+```
+
+
+
+Setup function for plotting heatmaps
+
+```{r}
+
+# ----- Define a function for plotting a matrix ----- #
+# from http://www.phaget4.org/R/image_matrix.html
+myImagePlot <- function(x, max, min, ...){
+     yLabels <- rownames(x)
+     xLabels <- colnames(x)
+     title <-c()
+  # check for additional function arguments
+  if( length(list(...)) ){
+    Lst <- list(...)
+    if( !is.null(Lst$zlim) ){
+       min <- Lst$zlim[1]
+       max <- Lst$zlim[2]
+    }
+    if( !is.null(Lst$yLabels) ){
+       yLabels <- c(Lst$yLabels)
+    }
+    if( !is.null(Lst$xLabels) ){
+       xLabels <- c(Lst$xLabels)
+    }
+    if( !is.null(Lst$title) ){
+       title <- Lst$title
+    }
+  }
+# check for null values
+if( is.null(xLabels) ){
+   xLabels <- c(1:ncol(x))
+}
+if( is.null(yLabels) ){
+   yLabels <- c(1:nrow(x))
+}
+
+layout(matrix(data=c(1,2), nrow=1, ncol=2), widths=c(4,1), heights=c(1,1))
+
+ # Red and green range from 0 to 1 while Blue ranges from 1 to 0
+ ColorRamp <- colorRampPalette(c('#222222', '#EEEEEE'))(n = 256)
+ ColorLevels <- seq(min, max, length=length(ColorRamp))
+
+ # Reverse Y axis
+ reverse <- nrow(x) : 1
+ yLabels <- yLabels[reverse]
+ x <- x[reverse,]
+
+ # Data Map
+ par(mar = c(3,5,2.5,2))
+ image(1:length(xLabels), 1:length(yLabels), t(x), col=ColorRamp, xlab="",
+ ylab="", axes=FALSE, zlim=c(min,max))
+ if( !is.null(title) ){
+    title(main=title)
+ }
+axis(BELOW<-1, at=1:length(xLabels), labels=xLabels, cex.axis=0.7)
+ axis(LEFT <-2, at=1:length(yLabels), labels=yLabels, las= HORIZONTAL<-1,
+ cex.axis=0.7)
+
+ # Color Scale
+ par(mar = c(3,2.5,2.5,2))
+ image(1, ColorLevels,
+      matrix(data=ColorLevels, ncol=length(ColorLevels),nrow=1),
+      col=ColorRamp,
+      xlab="",ylab="",
+      xaxt="n")
+
+ layout(1)
+}
+# ----- END plot function ----- #
+```
+
+
+
+## Plotting results
+Time to plot!
+
+
+Check whether everything was loaded ok, plot values of first cycle
+
+```{r}
+
+
+# make a subset of the data frames for plotting
+rox_data_first_cycle.df <- all.df[all.df$cycle == 1, which(names(all.df) %in% c('assay_well', 'sample_well', 'rox_value'))]
+fam_data_first_cycle.df <- all.df[all.df$cycle == 1, which(names(all.df) %in% c('assay_well', 'sample_well', 'fam_value'))]
+
+# make wide format
+rox_data_wide.df <- dcast(rox_data_first_cycle.df, assay_well ~ sample_well, value.var='rox_value')
+fam_data_wide.df <- dcast(fam_data_first_cycle.df, assay_well ~ sample_well, value.var='fam_value')
+
+# use first column as row names
+rox.mat_data <- data.matrix(rox_data_wide.df[, 2:length(names(rox_data_wide.df))]) 
+rnames <- rox_data_wide.df[,'assay_well']   # assign labels in the "File" column to "rnames"
+rownames(rox.mat_data) <- rnames 
+
+fam.mat_data <- data.matrix(fam_data_wide.df[, 2:length(names(fam_data_wide.df))]) 
+rnames <- fam_data_wide.df[,'assay_well']   # assign labels in the "File" column to "rnames"
+rownames(fam.mat_data) <- rnames 
+
+
+# Now make the heatmap
+myImagePlot(rox.mat_data, max=65000, min=0, title=('ROX channel'))
+myImagePlot(fam.mat_data, max=65000, min=0, title=('FAM channel'))
+```
+
+
+
+** Here I should add a step where all samples with "bad data", as indicated by no FAM fluorescence, are removed from the dataset.
+```{r}
+
+```
+
+
+
+First we plot the raw kinetics observed in all the wells
+
+```{r fig.height = 20, fig.width = 10}
+
+ggplot(all.df, aes(x=cycle, y=rox_value, color=factor(final_substrate_conc)))+
+    theme_bw() +
+    geom_point(cex=0.5) + 
+    ggtitle('Raw data measured over time') +
+    xlab('Cycle') + 
+    ylab('Signal') +
+    facet_grid(cols=vars(sample_substrate), rows=vars(assay_enzyme, final_enzyme_conc)) +
+    theme(legend.position = "none")
+
+```
+
+
+
+
+Make a subset which should be the linear range, plot again
+
+```{r fig.height = 20, fig.width = 10}
+SLOPE_FIRST_CYCLE <- 10
+SLOPE_LAST_CYCLE <- 30
+
+
+all.df.slope.subset <- all.df[all.df$cycle >= SLOPE_FIRST_CYCLE & all.df$cycle <= SLOPE_LAST_CYCLE, ]
+
+ggplot(all.df.slope.subset, aes(x=cycle, y=rox_value, color=factor(final_substrate_conc)))+
+    theme_bw() +
+    geom_point(cex=0.5) + 
+    ggtitle('Selected linear range') +
+    xlab('Cycle') + 
+    ylab('Signal') +
+    facet_grid(cols=vars(sample_substrate), rows=vars(assay_enzyme, final_enzyme_conc)) +
+    theme(legend.position = "none")
+
+```
+
+
+Subtract fluorescence from the no enzyme control
+
+```{r fig.height = 20, fig.width = 10}
+control.df <- all.df.slope.subset[all.df.slope.subset$final_enzyme_conc==0, c('assay_enzyme', 'sample_substrate', 'final_substrate_conc', 'cycle', 'repeat_num', 'rox_value')]
+
+# rename the rox value
+colnames(control.df)[length(colnames(control.df))] <- 'rox_value_control'
+
+# do a left join to add on the controls to the samples
+all.df.slope.subset.combined <- merge(all.df.slope.subset, control.df, by=(c('assay_enzyme', 'sample_substrate', 'final_substrate_conc', 'cycle', 'repeat_num')), all.x=TRUE)
+
+# now calculate the normalized
+all.df.slope.subset.combined$rox_value_norm <- all.df.slope.subset.combined$rox_value - all.df.slope.subset.combined$rox_value_control
+
+
+ggplot(all.df.slope.subset.combined, aes(x=cycle, y=rox_value_norm, color=factor(final_substrate_conc)))+
+    theme_bw() +
+    geom_point(cex=0.5) + 
+    ggtitle('Selected linear range, normalized data') +
+    xlab('Cycle') + 
+    ylab('Signal') +
+    facet_grid(cols=vars(sample_substrate), rows=vars(assay_enzyme, final_enzyme_conc)) + 
+    theme(legend.position = "none")
+
+```
+
+
+
+** Here I need to filter out the samples where all values fall below 0 **
+```{r}
+
+```
+
+
+
+Fit a linear regression for all data between the first and last points, identify the one with the greatest R2 (or median or mean or something). This should be the one which is most linear
+
+```{r}
+# remove the control samples, they are not needed anymore as the data is now normalized
+all.df.slope.subset.combined <- all.df.slope.subset.combined[!all.df.slope.subset.combined$final_enzyme_conc==0, ]
+
+
+# first I need to bundle all the measurements from one well
+all.df.slope.subset.combined.grouped <- all.df.slope.subset.combined %>%
+    group_by(final_well, assay_well, sample_well, final_enzyme_conc, final_substrate_conc, repeat_num, assay_enzyme, sample_substrate) %>%
+    summarize(cycle=list(cycle), 
+              fam_value=list(fam_value), 
+              rox_value=list(rox_value))
+
+ 
+# now calculate the linear regression of ROX for each of the curves
+slopes.df <- all.df.slope.subset.combined.grouped %>%
+    group_by(final_well, assay_well, sample_well, final_enzyme_conc, final_substrate_conc, repeat_num, assay_enzyme, sample_substrate, final_substrate_conc) %>%
+    mutate(rox_slope = coef( lm(unlist(rox_value)~unlist(cycle)) )[2],
+              rox_r2 = summary( lm(unlist(rox_value)~unlist(cycle)) )$r.squared,
+              fam_slope = coef( lm(unlist(fam_value)~unlist(cycle)) )[2],
+              fam_r2 = summary( lm(unlist(fam_value)~unlist(cycle)) )$r.squared)
+
+head(slopes.df)
+```
+
+
+
+
+A look at the slope data as a heatmap.
+
+```{r}
+
+### Plotting slope ###
+
+# make a subset of the data frames for plotting
+slope_rox_data.df <- slopes.df[, which(names(slopes.df) %in% c('assay_well', 'sample_well', 'rox_slope'))]
+
+# make wide format
+slope_rox_data_wide.df <- dcast(slope_rox_data.df, assay_well ~ sample_well, value.var='rox_slope')
+
+# use first column as row names
+rox.mat_data <- data.matrix(slope_rox_data_wide.df[, 2:length(names(slope_rox_data_wide.df))]) 
+rnames <- slope_rox_data_wide.df[,'assay_well']   # assign labels in the "File" column to "rnames"
+rownames(rox.mat_data) <- rnames 
+
+
+# Now make the heatmap
+myImagePlot(rox.mat_data, max=max(rox.mat_data), min=min(rox.mat_data), title=('ROX channel slope (linear model)'))
+
+
+
+
+### Plotting R2 of linear model ###
+
+# make a subset of the data frames for plotting 
+df <- slopes.df[, which(names(slopes.df) %in% c('assay_well', 'sample_well', 'rox_r2'))]
+
+
+# make wide format
+df.wide <- dcast(df, assay_well ~ sample_well, value.var='rox_r2')
+
+# use first column as row names
+mat_data <- data.matrix(df.wide[, 2:length(names(df.wide))]) 
+rnames <- df.wide[,'assay_well']   # assign labels in the "File" column to "rnames"
+rownames(mat_data) <- rnames 
+
+# Now make the heatmap
+myImagePlot(mat_data, max=max(mat_data), min=min(mat_data), title=('ROX channel R2 of slope (linear model)'))
+
+
+```
+
+
+Remove all enzyme concentrations that have poor R2 values (below a set cutoff)
+
+```{r}
+
+# first I need to bundle all the measurements from each enzyme concentration
+bundled.slopes.df <- slopes.df %>%
+    group_by(assay_well, final_enzyme_conc, repeat_num, assay_enzyme, sample_substrate) %>%
+    summarize(rox_slope=list(rox_slope), 
+              rox_r2=list(rox_r2),
+              final_substrate_conc=list(final_substrate_conc))
+
+
+# now check, for each enzyme concentration, whether any of the R2 scores are below the cutoff
+# a bad R2 score indicates a poor fit of the data to the linear model
+bundled.slopes.nonegs.df <- bundled.slopes.df %>%
+    group_by(assay_well, final_enzyme_conc, repeat_num, assay_enzyme, sample_substrate) %>%
+    mutate(bad_r2 = any(unlist(rox_r2) < R2_CUTOFF))
+
+# now actually filter the data
+bundled.slopes.nonegs.df <- bundled.slopes.nonegs.df[bundled.slopes.nonegs.df$bad_r2 == FALSE, ]
+
+
+head(bundled.slopes.nonegs.df)
+```
+
+
+
+
+Calculate spearman correlation between substrate concentration and the measured slope (the kinetic slope)
+
+```{r}
+
+bundled.slopes.nonegs.spearman.df <- bundled.slopes.nonegs.df %>%
+        group_by(assay_well, final_enzyme_conc, repeat_num, assay_enzyme, sample_substrate) %>%
+        mutate(slope_spearman_pval = cor.test(unlist(final_substrate_conc), unlist(rox_slope),  method='spearman')$p.value,
+        slope_spearman_rho = cor.test(unlist(final_substrate_conc), unlist(rox_slope), method='spearman')[[4]])
+
+head(bundled.slopes.nonegs.spearman.df)
+
+barplot(bundled.slopes.nonegs.spearman.df$slope_spearman_rho, 
+        names=interaction(bundled.slopes.nonegs.spearman.df$final_enzyme_conc, c('repeat'), bundled.slopes.nonegs.spearman.df$repeat_num),
+        ylim=c(-1, 1),
+        xlab='final_enzyme_conc',
+        ylab='spearman rho',
+        main='Which enzyme conc. is best?\n(corr. of substrate conc. and kinetic slope)')
+
+```
+
+
+
+
+For each repeat choose the enzyme concentration with maximal spearman rho
+
+```{r}
+bundled.slopes.nonegs.spearman.max.df <- bundled.slopes.nonegs.spearman.df %>%
+    group_by(assay_enzyme, repeat_num, sample_substrate) %>%
+    top_n(1, slope_spearman_rho) %>%
+    slice(which.max(slope_spearman_rho))
+
+
+head(bundled.slopes.nonegs.spearman.max.df)
+
+barplot(bundled.slopes.nonegs.spearman.max.df$slope_spearman_rho, 
+        names=interaction(bundled.slopes.nonegs.spearman.max.df$final_enzyme_conc, c('repeat'), bundled.slopes.nonegs.spearman.max.df$repeat_num),
+        ylim=c(-1, 1),
+        xlab='final_enzyme_conc',
+        ylab='spearman rho',
+        main='Selected enzyme concentrations')
+```
+
+
+
+
+Unbundle the dataset (turn the lists into column values again)
+
+```{r}
+bundled.slopes.nonegs.spearman.max.filtered.df <- bundled.slopes.nonegs.spearman.max.df[, -which(names(bundled.slopes.nonegs.spearman.max.df) %in% c('slope_spearman_rho', 'bad_r2', 'slope_spearman_pval'))]
+
+bundled.slopes.nonegs.spearman.max.filtered.unbundled.df <- unnest(bundled.slopes.nonegs.spearman.max.filtered.df)
+
+head(bundled.slopes.nonegs.spearman.max.filtered.unbundled.df)
+```
+
+
+
+
+Subtract the zero substrate slope from all others
+
+```{r}
+
+slope.of.control.df <- bundled.slopes.nonegs.spearman.max.filtered.unbundled.df[bundled.slopes.nonegs.spearman.max.filtered.unbundled.df$final_substrate_conc==0, c('assay_enzyme', 'sample_substrate', 'repeat_num', 'rox_slope')]
+
+# rename the rox value
+colnames(slope.of.control.df)[length(colnames(slope.of.control.df))] <- 'rox_slope_control'
+
+# do a left join to add on the controls to the samples
+final.data.df <- merge(bundled.slopes.nonegs.spearman.max.filtered.unbundled.df, slope.of.control.df, by=(c('assay_enzyme', 'sample_substrate', 'repeat_num')), all.x=TRUE)
+
+# now calculate the normalized
+final.data.df$rox_slope_norm <- final.data.df$rox_slope - final.data.df$rox_slope_control
+
+
+ggplot(final.data.df, aes(x=final_substrate_conc, y=rox_slope_norm))+
+    theme_bw() +
+    geom_point(cex=0.5) + 
+    ggtitle(sprintf('Selected linear range, plate %s, array %s, background-subtracted data', PLATE_NUMBER, ARRAY_NUMBER)) +
+    xlab(sprintf('Substrate conentration (%s)', unique(sample.df$sample_substrate_unit))) + 
+    ylab('Signal') +
+    facet_grid(cols=vars(sample_substrate), rows=vars(assay_enzyme, final_enzyme_conc))
+
+
+```
+
+
+
+
+Remove bad values (low concentrations where no activity is seen, whithin a certain tolerance)
+
+```{r}
+
+# first remove values close to zero
+final.data.filtered.df <- final.data.df[final.data.df$rox_slope_norm > 0 + TOLERANCE_AT_ZERO * max(final.data.df$rox_slope_norm), ]
+
+
+# determine the substrate concentration at the maximal slope is obtained
+max.df <- final.data.filtered.df %>%
+  select(assay_enzyme, sample_substrate, final_substrate_conc, repeat_num, final_enzyme_conc, rox_slope_norm) %>%
+  group_by(assay_enzyme, sample_substrate, repeat_num) %>%
+  slice(which.max(rox_slope_norm))
+
+# drop the rox data and rename the substrate concentration column
+max.df <- max.df[, -which(names(max.df) %in% c('rox_slope_norm'))]
+names(max.df)[grep("final_substrate_conc", colnames(max.df))] <- 'final_substrate_conc_at_max'
+
+# join the data frames
+final.data.filtered.df <- merge(final.data.filtered.df, max.df, by=(c('assay_enzyme', 'sample_substrate', 'repeat_num', 'final_enzyme_conc')), all.x=TRUE)
+
+# now remove values on the plateau if they are lower than the maximum rate, within some tolerance
+final.data.filtered.both.df <- final.data.filtered.df %>%
+  select(assay_enzyme, sample_substrate, final_substrate_conc, repeat_num, final_enzyme_conc, rox_slope_norm, final_substrate_conc_at_max) %>%
+  group_by(assay_enzyme, sample_substrate, repeat_num) %>%
+  filter(final_substrate_conc <= final_substrate_conc_at_max |
+         final_substrate_conc > final_substrate_conc_at_max & rox_slope_norm >= max(rox_slope_norm) - TOLERANCE_AT_VMAX * max(rox_slope_norm))
+
+
+# plot to see the data
+ggplot(final.data.filtered.both.df, aes(x=final_substrate_conc, y=rox_slope_norm))+
+    theme_bw() +
+    geom_point(cex=0.5) + 
+    ggtitle(sprintf('Selected linear range, plate %s, array %s, background-subtracted and filtered data', PLATE_NUMBER, ARRAY_NUMBER)) +
+    xlab(sprintf('Substrate conentration (%s)', unique(sample.df$sample_substrate_unit))) + 
+    ylab('Signal') +
+    facet_grid(cols=vars(sample_substrate), rows=vars(assay_enzyme, final_enzyme_conc))
+
+
+
+```
+
+
+
+Normalize data to the enzyme dilution
+
+```{r}
+final.data.filtered.both.df$rox_slope_norm_1x <- final.data.filtered.both.df$rox_slope_norm / final.data.filtered.both.df$final_enzyme_conc
+
+head(final.data.filtered.both.df)
+```
+
+
+
+Plot slope vs substrate concentration, estimate Km and Vmax by fitting to the Michaelis-Menten equation
+
+```{r}
+in_data <- final.data.filtered.both.df
+
+
+## Need to generalize this for many enzymes.... ##
+
+
+# "velocity = Vmax times S divided by (Km plus S)", stored in MMcurve
+MMcurve<-formula(v ~ Vmax*S/(Km+S))
+
+
+# fit the equation to data using non-linear least squares
+kinetic_data <- in_data[, which(names(in_data) %in% c('assay_enzyme', 'rox_slope_norm_1x', 'final_substrate_conc'))]
+
+# rename to make it work with the formula
+slope_index <- grep("rox_slope_norm_1x", colnames(kinetic_data))
+names(kinetic_data)[slope_index] <- 'v'
+
+substrate_index <- grep("final_substrate_conc", colnames(kinetic_data))
+names(kinetic_data)[substrate_index] <- 'S'
+
+
+# estimate Vmax
+vmax_estimate <- max(kinetic_data$v)
+
+
+# estimate km at concentration closest to half of Vmax
+index_of_half_vmax <- which.min(abs(kinetic_data$v - max(kinetic_data$v)/2))
+km_estimate = kinetic_data$S[index_of_half_vmax]
+  
+
+# perform non-linear least squares regression
+bestfit <- nls(MMcurve, kinetic_data, start=list(Vmax=vmax_estimate, Km=km_estimate))
+
+
+# generate new x-values that can be used to predict y using the model (for making the smooth curve)
+xNew <- seq(0, max(in_data$final_substrate_conc), length.out = 100)
+yNew <- predict(bestfit, newdata=list(S = xNew))
+
+p1 <- ggplot(in_data, aes(x=final_substrate_conc, y=rox_slope_norm_1x))+
+    theme_bw() +
+    geom_point(cex=1.5, fill='red', color='red') + 
+    geom_line(data=data.frame(xNew, yNew), aes(x=xNew, y=yNew)) + 
+    ggtitle(sprintf('Km plot, plate %s, array %s', PLATE_NUMBER, ARRAY_NUMBER)) +
+    xlab(sprintf('Substrate (%s)', unique(sample.df$sample_substrate_unit))) + 
+    ylab('Signal') +
+    annotate("text", x = max(in_data$final_substrate_conc) - max(in_data$final_substrate_conc)*0.1, y = min(in_data$rox_slope_norm_1x) + max(in_data$rox_slope_norm_1x)*0.05, label = sprintf("Vmax = %s", formatC(coef(bestfit)['Vmax'], format = "e", digits = 2))) + 
+    annotate("text", x = max(in_data$final_substrate_conc) - max(in_data$final_substrate_conc)*0.1, y = min(in_data$rox_slope_norm_1x) + max(in_data$rox_slope_norm_1x)*0.1, label = sprintf("Km = %s %s", round(coef(bestfit)['Km'], 2), unique(sample.df$sample_substrate_unit))) + 
+    facet_grid(cols=vars(sample_substrate), rows=vars(assay_enzyme))
+
+
+p1
+
+# save the figure
+fname = paste(FINAL, THIS_PROJECT_FOLDER, sprintf('plate_%s_array_%s_Km_plot.pdf', PLATE_NUMBER, ARRAY_NUMBER), sep='/')
+ggsave(filename=fname, plot=p1, width = 150*length(unique(sample.df$sample_substrate)), height = 100*length(unique(assay.df$assay_enzyme)), units=c('mm'))
+
+
+# save the km and kcat
+
+```
+
+

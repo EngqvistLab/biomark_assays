@@ -1,0 +1,343 @@
+---
+output:
+  html_document: default
+  pdf_document: default
+---
+
+---
+title: "Resorufin standard curve, measured in Biomark"
+output: html_notebook
+---
+
+Copyright (C) 2020  Martin Engqvist Lab
+
+
+
+
+## Experiment
+.....
+
+Experimental data collected on 160719 (DDMMYY) in Petter Wolls group at Karolinska using a BioMark instrument.
+
+
+```{r setup}
+
+#make sure the packages are installed
+wants <- c('dplyr', 'reshape2', 'ggplot2', 'tidyverse', 'assertthat')
+has   <- wants %in% rownames(installed.packages())
+if(any(!has)) install.packages(wants[!has], repos="http://ftp.acc.umu.se/mirror/CRAN/")
+
+#load all the packages
+lapply(wants, require, character.only = TRUE)
+
+
+#find the "code" directory, this should be one folder away from the project root
+while (basename(getwd()) != 'code'){
+  setwd("../")
+  if (getwd() == '/'){
+    quit(status = 1)
+  }
+}
+
+#go one folder up and set as project root directory
+setwd("../")
+PROJ <- getwd()
+setwd(paste0(PROJ, '/data/'))
+
+#set folder paths relative to the project root
+CURRENT <- getwd()
+DATA <- getwd()
+RAW_EXTERNAL <- paste0(DATA, '/raw_external/')
+RAW_INTERNAL <- paste0(DATA, '/raw_internal/')
+INTERMEDIATE = paste0(DATA, '/intermediate/')
+FINAL = paste0(DATA, '/final/')
+
+RESULTS <- paste0(PROJ, '/results/')
+FIGURES <- paste0(RESULTS, 'figures/')
+PICTURES <- paste0(RESULTS, 'pictures/')
+
+THIS_PROJECT_FOLDER <- 'resorufin_std_curves'
+
+# load helper functions
+source(paste0(PROJ, '/code/', 'flex_six_helper_functions.R'))
+print(paste0('helper script version: ', VERSION))
+
+```
+
+
+
+Setup plotting preferences
+
+```{r}
+font_size = 7
+plt_height = 65
+plt_width = 89
+line_size = 0.5
+line_width <- 0.5
+error_size = 0.25
+pd = position_dodge(0.9)
+
+gen_col = '#141A46'
+nat_col = '#EC8B5E'
+neg_col = '#868686'
+
+
+
+ggplot_theme <- theme(text = element_text( size=font_size), 
+                      axis.text.x = element_text(angle = 0, hjust = 1, size=font_size),
+                      axis.text.y = element_text(size=font_size),
+                      axis.line = element_line(color = "black", size=line_size),
+                      axis.ticks.x = element_line(color = 'black', size=line_size),
+                      axis.ticks.y = element_line(color = 'black', size=line_size),
+                      #legend.text = element_text( size=font_size),
+                      legend.position = c(0, 1),
+                      legend.justification = c(0, 1),
+                      legend.background = element_blank(),
+                      legend.direction = 'horizontal',
+                      legend.text=element_text(size=font_size),
+                      plot.title = element_text( size=font_size),
+                      panel.background = element_blank(),
+                      panel.border = element_rect(color = 'black', size=line_size),
+                      #panel.margin = 
+                      panel.grid.major = element_blank(), 
+                      panel.grid.minor = element_blank(),
+                      panel.grid.major.x = element_blank(), 
+                      panel.grid.major.y = element_blank(), 
+                      panel.grid.minor.x = element_blank(), 
+                      panel.grid.minor.y = element_blank() 
+)
+```
+
+
+
+```{r}
+load_data <- function(chip_number, array_number, rox_data, fam_data, repeat_num, experiment){
+  
+  # load sample layout
+  assay.df <- read.table(paste(INTERMEDIATE, THIS_PROJECT_FOLDER, sprintf('chip%s_array%s_assay.tsv', chip_number, array_number), sep='/'), sep='\t', header=TRUE)
+  
+  # load array layout
+  sample.df <- read.table(paste(INTERMEDIATE, THIS_PROJECT_FOLDER, sprintf('chip%s_array%s_sample.tsv', chip_number, array_number), sep='/'), sep='\t', header=TRUE)
+  
+  # mix the two
+  mixed.df <- mix_wells(assay.df, sample.df)
+  
+  # read the experimental data obtained from the BioMark
+  rox.df <- read.table(paste(INTERMEDIATE, THIS_PROJECT_FOLDER, rox_data, sep='/'), sep='\t', header=TRUE)
+  fam.df <- read.table(paste(INTERMEDIATE, THIS_PROJECT_FOLDER, fam_data, sep='/'), sep='\t', header=TRUE)
+  
+  # convert to long format
+  all.df <- combine_data(mixed.df, rox.df, fam.df)
+  
+  # specify experiment-specific parameters
+  all.df$repeat_num <- repeat_num
+  all.df$experiment <- experiment
+  
+  return(all.df)
+}
+```
+
+
+
+
+
+## Load all the data
+```{r}
+
+data1.df <- load_data(chip_number=3, array_number=4, 
+                     rox_data='1530024086_chip_3_array_4_rox.tsv', 
+                     fam_data='1530024086_chip_3_array_4_fam.tsv', 
+                     repeat_num=1, 
+                     experiment='low_range')
+
+data2.df <- load_data(chip_number=3, array_number=5, 
+                     rox_data='1530024086_chip_3_array_5_rox.tsv', 
+                     fam_data='1530024086_chip_3_array_5_fam.tsv', 
+                     repeat_num=1, 
+                     experiment='high_range')
+
+data3.df <- load_data(chip_number=3, array_number=6, 
+                     rox_data='1530024086_chip_3_array_6_rox.tsv', 
+                     fam_data='1530024086_chip_3_array_6_fam.tsv', 
+                     repeat_num=2, 
+                     experiment='low_range')
+
+data4.df <- load_data(chip_number=4, array_number=4, 
+                     rox_data='1530024197_chip_4_array_4_rox.tsv', 
+                     fam_data='1530024197_chip_4_array_4_fam.tsv', 
+                     repeat_num=2, 
+                     experiment='high_range')
+
+all.df <- rbind(data1.df, data2.df, data3.df, data4.df)
+
+head(all.df)
+tail(all.df)
+
+# Let's export this to a flatfile for future use.
+write.table(all.df, file=paste(FINAL, THIS_PROJECT_FOLDER, 'flex_six_std_curves_all_data_combined.tsv', sep='/'), sep='\t', row.names=FALSE)
+
+```
+
+
+
+## Plotting results
+Time to plot!
+
+
+Plot rox and fam values of first and last cycle
+
+```{r}
+
+# low range, first experiment
+plot_raw_data_heatmaps(all.df[all.df$experiment=='low_range' & all.df$repeat_num==1, ], min=0, max=65000)
+
+# low range, second experiment
+plot_raw_data_heatmaps(all.df[all.df$experiment=='low_range' & all.df$repeat_num==2, ], min=0, max=65000)
+
+# high range, first experiment
+plot_raw_data_heatmaps(all.df[all.df$experiment=='high_range' & all.df$repeat_num==1, ], min=0, max=65000)
+
+# high range, second experiment
+plot_raw_data_heatmaps(all.df[all.df$experiment=='high_range' & all.df$repeat_num==2, ], min=0, max=65000)
+```
+
+
+
+
+First we plot the raw values observed in all the wells
+
+```{r}
+ggplot(all.df[all.df$cycle==1, ], aes(x=final_substrate_conc, y=rox_value, color=factor(final_substrate_conc)))+
+    theme_bw() +
+    geom_point(cex=0.5) + 
+    ggtitle('Raw data at cycle 1') +
+    xlab('Concentration') + 
+    ylab('Signal') +
+    facet_grid(cols=vars(experiment), rows=vars(repeat_num))
+
+```
+Concentrations at 10 uM and above are very clearly too high. The curve is not linear any more. Let's remove value above and re-plot.
+
+
+
+Remove the high range data since this reaches a chipau
+
+```{r}
+all.df.subset <- all.df[all.df$final_substrate_conc <= 5, ]
+
+ggplot(all.df.subset[all.df.subset$cycle==1, ], aes(x=final_substrate_conc, y=rox_value, color=factor(final_substrate_conc)))+
+    theme_bw() +
+    geom_point(cex=0.5) + 
+    ggtitle('Raw data at cycle 1') +
+    xlab('Concentration') + 
+    ylab('Signal') +
+    facet_grid(cols=vars(experiment), rows=vars(repeat_num))
+
+```
+This looks much better! Strangly the high_range samples have a large spread, but the low_range samples look good.
+
+
+
+
+I need to subtract the base fluorescence (the 0 sample) from these.
+```{r}
+
+# first get the values from control
+control.df <- all.df.subset[all.df.subset$final_substrate_conc==0, c('cycle', 'repeat_num', 'rox_value', 'experiment')]
+
+# rename the rox value
+colnames(control.df)[colnames(control.df) == 'rox_value'] <- 'rox_value_control'
+
+# do a left join to add on the controls to the samples
+df.combined <- merge(all.df.subset, control.df, by=(c('cycle', 'experiment', 'repeat_num')), all.x=TRUE)
+
+# now calculate the normalized values
+df.combined$rox_value_norm <- df.combined$rox_value - df.combined$rox_value_control
+
+# remove the control samples, they are not needed anymore as the data is now normalized
+df.combined <- df.combined[!df.combined$final_substrate_conc==0, ]
+df.combined$final_substrate_norm_unit <- unique(df.combined$final_substrate_unit)
+
+# drop unneeded columns
+all.df.subset.norm <- df.combined[, -which(names(df.combined) %in% c('rox_value_control'))]
+
+# re-order the data
+all.df.subset.norm <- all.df.subset.norm %>% 
+  select(cycle, assay_well, sample_well, assay_enzyme, final_enzyme_conc, final_enzyme_unit, sample_substrate, final_substrate_conc, final_substrate_unit, repeat_num, rox_value_norm, final_substrate_norm_unit, experiment)
+
+
+
+ggplot(all.df.subset.norm[all.df.subset.norm$cycle==1, ], aes(x=final_substrate_conc, y=rox_value_norm, color=factor(final_substrate_conc)))+
+    theme_bw() +
+    geom_point(cex=0.5) + 
+    ggtitle('Background-subtracted data at cycle 1') +
+    xlab('Concentration') + 
+    ylab('Signal') +
+    facet_grid(cols=vars(experiment), rows=vars(repeat_num))
+```
+
+
+
+Fit a linear regression for all the data together
+
+```{r}
+in_data <- all.df.subset.norm[all.df.subset.norm$cycle==1 & all.df.subset.norm$experiment == 'low_range' & all.df.subset.norm$repeat_num == 1, ]
+
+# Fit a linear regression to get the slope.
+# make a model for only repeat 1 of the low range
+model <- lm(in_data$rox_value_norm ~ in_data$final_substrate_conc)
+
+rep1_intercept <- coef(model)[[1]]
+rep1_slope <- coef(model)[[2]]
+rep1_fit <- summary(model)$r.squared
+
+#model
+print('Repeat 1, low range')
+sprintf('Intercept: %s', rep1_intercept)
+sprintf('Slope: %s', rep1_slope)
+sprintf('R2: %s', rep1_fit)
+print('')
+
+# plot the graph
+p1 <- ggplot(in_data, aes(x=final_substrate_conc, y=rox_value_norm)) +
+    theme_bw() +
+    ggplot_theme +
+    geom_smooth(method = 'lm', se = FALSE) +
+    geom_point(cex=1.0, alpha=0.5, shape=16) + 
+    ggtitle('Fluidigm') +
+    xlab(expression(paste('Resorufin (', mu, 'M', ')') ) ) + 
+    ylab('Fluorescence') + 
+    annotate("text", 
+            x = 0, 
+            y = max(in_data$rox_value_norm)*0.95, 
+            label = as.expression(bquote(italic(R)^{2} ~ '=' ~ .(formatC(rep1_fit, format='g', digits=3)))), 
+            size=2,
+            hjust=0,
+            vjust=0) + 
+  
+    annotate("text", 
+            x = 0, 
+            y = max(in_data$rox_value_norm)*0.85, 
+            label = as.expression(bquote('y' ~ '=' ~ .(formatC(rep1_slope, format='g', digits=3)) ~ 'x + ' ~ .(formatC(rep1_intercept, format='g', digits=3)))), 
+            size=2,
+            hjust=0,
+            vjust=0)
+
+p1
+
+# save the figure
+fname = paste(FIGURES, sprintf('resorufin_standard_curve_biomark.pdf'), sep='/')
+ggsave(filename=fname, plot=p1, width = 65, height = 50, units=c('mm'))
+```
+
+
+
+
+Print out the final data
+
+```{r}
+print('Standard curve according to: y = kx + m')
+sprintf('y = %sx + %s    with an R2 of %s', round(rep1_slope), round(rep1_intercept), round(rep1_fit, 3))
+```
+
+

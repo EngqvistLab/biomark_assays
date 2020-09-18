@@ -1,0 +1,409 @@
+---
+output:
+  html_document: default
+  pdf_document: default
+---
+
+---
+title: "First test of purchased LOX"
+output: html_notebook
+---
+  
+
+Copyright (C) 2020  Martin Engqvist Lab
+
+
+
+## Experiment
+
+We decided to use 0.1uM (final concentration) of fluorescein on both sides as a loading control. In this experiment we want to test commercial lactate oxidase (LOX) to see whether we can detect enzyme activity on the chip. The enzyme produces hydrogen peroxide which is used by horse raddish peroxidase together with amplex red to generate resurofin. We load all reagents, and peroxidase, on the assay side and load serial dilutions of LOX on the assay side. On the sample side we make use of the two substrates glycolate and L-lactate as well as a no-substrate control. Additionally, we want to test whether we need to add BSA on the assay side as a blocking agent, so all reactions are repeated twice, with and without BSA. On the sample side we want to test the effect of detergent so the serial dilutions of LOX are done twice, either in 0.01 % Tween and Triton or 0.1%.
+
+Experimental data collected on 301018 (DDMMYY) in Petter Wolls group at Karolinska using a BioMark instrument.
+
+```{r setup}
+
+#make sure the packages are installed
+wants <- c('dplyr', 'reshape2', 'ggplot2')
+has   <- wants %in% rownames(installed.packages())
+if(any(!has)) install.packages(wants[!has], repos="http://ftp.acc.umu.se/mirror/CRAN/")
+
+#load all the packages
+lapply(wants, require, character.only = TRUE)
+
+
+#find the "code" directory, this should be one folder away from the project root
+while (basename(getwd()) != 'code'){
+  setwd("../")
+  if (getwd() == '/'){
+    quit(status = 1)
+  }
+}
+
+#go one folder up and set as project root directory
+setwd("../")
+PROJ <- getwd()
+setwd(paste0(PROJ, '/data/'))
+
+#set folder paths relative to the project root
+CURRENT <- getwd()
+DATA <- getwd()
+RAW_EXTERNAL <- paste0(DATA, '/raw_external/')
+RAW_INTERNAL <- paste0(DATA, '/raw_internal/')
+INTERMEDIATE = paste0(DATA, '/intermediate/')
+FINAL = paste0(DATA, '/final/')
+
+RESULTS <- paste0(PROJ, '/results/')
+FIGURES <- paste0(RESULTS, 'figures/')
+PICTURES <- paste0(RESULTS, 'pictures/')
+
+```
+
+
+
+## Setup
+Let's input the experimental paramenters for sample and assay sides
+
+```{r}
+# Test 2 block1
+
+assay.df <- data.frame('assay_well'=c('A01','A02','A03','A04','A05','A06','A07','A08','A09','A10','A11','A12'),
+                       'assay_tween'=c(0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1),
+                        'assay_tween_unit'=c('% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)'),
+                       'assay_triton_conc'=c(0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1),
+                       'assay_triton_unit'=c('% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)'),
+                       'assay_fluorescein_conc'=c(1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0),
+                       'assay_fluorescein_unit'=c('uM', 'uM', 'uM', 'uM', 'uM', 'uM', 'uM', 'uM', 'uM', 'uM', 'uM', 'uM'),
+                       'assay_amplex_red_conc'=c(500.0, 500.0, 500.0, 500.0, 500.0, 500.0, 500.0, 500.0, 500.0, 500.0, 500.0, 500.0),
+                       'assay_amplex_red_unit'=c('uM', 'uM', 'uM', 'uM', 'uM', 'uM', 'uM', 'uM', 'uM', 'uM', 'uM', 'uM'),                                 
+                       'assay_substrate_name'=c('none', 'glycolate', 'lactate', 'none', 'glycolate', 'lactate', 'none', 'glycolate', 'lactate', 'none', 'glycolate', 'lactate'),
+                       'assay_substrate_conc'=c(0.0, 10.0, 10.0, 0.0, 10.0, 10.0, 0.0, 10.0, 10.0, 0.0, 10.0, 10.0),
+                       'assay_substrate_unit'=c('mM', 'mM', 'mM', 'mM', 'mM', 'mM', 'mM', 'mM', 'mM', 'mM', 'mM', 'mM'),
+                       'assay_bsa_conc'=c(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2),
+                       'assay_bsa_unit'=c('mg/mL', 'mg/mL', 'mg/mL', 'mg/mL', 'mg/mL', 'mg/mL', 'mg/mL', 'mg/mL', 'mg/mL', 'mg/mL', 'mg/mL', 'mg/mL'))
+
+
+sample.df <- data.frame('sample_well'=c('S01','S02','S03','S04','S05','S06','S07','S08','S09','S10','S11','S12'),
+                        'sample_tween_conc'=c(0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1),
+                        'sample_tween_unit'=c('% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)'),
+                        'sample_triton_conc'=c(0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1),
+                        'sample_triton_unit'=c('% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)'),                        
+                        'sample_fluorescein_conc'=c(0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1),
+                        'sample_fluorescein_unit'=c('uM', 'uM', 'uM', 'uM', 'uM', 'uM', 'uM', 'uM', 'uM', 'uM', 'uM', 'uM'),         
+                        'sample_enzyme_name'=c('lox', 'lox', 'lox', 'lox', 'lox', 'lox', 'lox', 'lox', 'lox', 'lox', 'lox', 'lox'),
+                        'sample_enzyme_conc'=c(0.0, 1.0, 5.0, 10.0, 20.0, 50.0, 0.0, 1.0, 5.0, 10.0, 20.0, 50.0),
+                        'sample_enzyme_units'=c('mU/ml', 'mU/ml', 'mU/ml', 'mU/ml', 'mU/ml', 'mU/ml', 'mU/ml', 'mU/ml', 'mU/ml', 'mU/ml', 'mU/ml', 'mU/ml'))
+
+
+head(assay.df)
+head(sample.df)
+```
+
+
+```{r}
+# make all combinations of wells
+mixed.df <- expand.grid(sample.df$sample_well, assay.df$assay_well)
+
+# fix the colnames
+colnames(mixed.df) <- c('sample_well', 'assay_well')
+
+# add in the original data
+mixed.df <- merge(mixed.df, sample.df, by='sample_well')
+mixed.df <- merge(mixed.df, assay.df, by='assay_well')
+
+
+# calculate final 
+mixed.df$final_well <- paste(mixed.df$sample_well, mixed.df$assay_well, sep='-')
+
+mixed.df$final_fluorescein_conc <- mixed.df$assay_fluorescein_conc/10 + mixed.df$sample_fluorescein_conc/1.1
+mixed.df$final_fluorescein_unit <- mixed.df$assay_fluorescein_unit
+
+mixed.df$final_amplex_red_conc <- mixed.df$assay_amplex_red_conc/10 
+mixed.df$final_amplex_red_unit <- mixed.df$assay_amplex_red_unit
+
+mixed.df$final_substrate_name <- mixed.df$assay_substrate_name
+mixed.df$final_substrate_conc <- mixed.df$assay_substrate_conc/10 
+mixed.df$final_substrate_unit <- mixed.df$assay_substrate_unit
+
+mixed.df$final_bsa_conc <- mixed.df$assay_bsa_conc/10 
+mixed.df$final_bsa_unit <- mixed.df$assay_bsa_unit
+
+mixed.df$final_enzyme_name <- mixed.df$sample_enzyme_name
+mixed.df$final_enzyme_conc <- mixed.df$sample_enzyme_conc/1.1 
+mixed.df$final_enzyme_unit <- mixed.df$sample_enzyme_unit
+
+head(mixed.df)
+tail(mixed.df)
+```
+
+
+
+## Loading data
+
+So now we have the conditions in the final wells. Time to load up the measured data.
+From the data file that goes with this script (1530021086_chip_1_array_2_raw.csv) I manually exported the ROX and FAM signal separately to tsv files. Load the data and then combine with my condition file.
+
+```{r}
+# read the experimental data obtained from the BioMark
+rox.df <- read.table(paste(INTERMEDIATE, 'flex_six_first_test', '1530021086_chip_1_array_2_ROX.tsv', sep='/'), sep='\t', header=TRUE)
+colnames(rox.df) <- c(c('final_well'), paste0('rox_cycle_', seq(length(colnames(rox.df))-1)))
+
+fam.df <- read.table(paste(INTERMEDIATE, 'flex_six_first_test', '1530021086_chip_1_array_2_FAM.tsv', sep='/'), sep='\t', header=TRUE)
+colnames(fam.df) <- c(c('final_well'), paste0('fam_cycle_', seq(length(colnames(fam.df))-1)))
+
+
+# Add the data into my frame with concentration info
+all.df <- merge(mixed.df, rox.df, by='final_well')
+all.df <- merge(all.df, fam.df, by='final_well')
+
+head(all.df)
+```
+
+Looks good! Let's export this to a flatfile for future use.
+
+
+```{r}
+write.table(all.df, file=paste(FINAL, 'flex_six_first_test', 'chip_1_array_2_all_data_combined.tsv', sep='/'), sep='\t', row.names=FALSE)
+```
+
+
+## Plotting results
+Time to plot!
+
+
+A look at the raw data as a heatmap.
+
+```{r}
+
+
+# ----- Define a function for plotting a matrix ----- #
+# from http://www.phaget4.org/R/image_matrix.html
+myImagePlot <- function(x, ...){
+     min <- 0
+     max <- 65000
+     yLabels <- rownames(x)
+     xLabels <- colnames(x)
+     title <-c()
+  # check for additional function arguments
+  if( length(list(...)) ){
+    Lst <- list(...)
+    if( !is.null(Lst$zlim) ){
+       min <- Lst$zlim[1]
+       max <- Lst$zlim[2]
+    }
+    if( !is.null(Lst$yLabels) ){
+       yLabels <- c(Lst$yLabels)
+    }
+    if( !is.null(Lst$xLabels) ){
+       xLabels <- c(Lst$xLabels)
+    }
+    if( !is.null(Lst$title) ){
+       title <- Lst$title
+    }
+  }
+# check for null values
+if( is.null(xLabels) ){
+   xLabels <- c(1:ncol(x))
+}
+if( is.null(yLabels) ){
+   yLabels <- c(1:nrow(x))
+}
+
+layout(matrix(data=c(1,2), nrow=1, ncol=2), widths=c(4,1), heights=c(1,1))
+
+ # Red and green range from 0 to 1 while Blue ranges from 1 to 0
+ ColorRamp <- colorRampPalette(c('#222222', '#EEEEEE'))(n = 256)
+ ColorLevels <- seq(min, max, length=length(ColorRamp))
+
+ # Reverse Y axis
+ reverse <- nrow(x) : 1
+ yLabels <- yLabels[reverse]
+ x <- x[reverse,]
+
+ # Data Map
+ par(mar = c(3,5,2.5,2))
+ image(1:length(xLabels), 1:length(yLabels), t(x), col=ColorRamp, xlab="",
+ ylab="", axes=FALSE, zlim=c(min,max))
+ if( !is.null(title) ){
+    title(main=title)
+ }
+axis(BELOW<-1, at=1:length(xLabels), labels=xLabels, cex.axis=0.7)
+ axis(LEFT <-2, at=1:length(yLabels), labels=yLabels, las= HORIZONTAL<-1,
+ cex.axis=0.7)
+
+ # Color Scale
+ par(mar = c(3,2.5,2.5,2))
+ image(1, ColorLevels,
+      matrix(data=ColorLevels, ncol=length(ColorLevels),nrow=1),
+      col=ColorRamp,
+      xlab="",ylab="",
+      xaxt="n")
+
+ layout(1)
+}
+# ----- END plot function ----- #
+
+
+
+make_heatmap <- function(mat_data){
+
+  color_scale <- colorRampPalette(c('#1A1A1A', '#EEEEEE'))(n = 256)
+  
+  # adjust the color scale. Max value sems to be around 65,000
+  max_val <- max(mat_data)
+  if (max_val > 65000){
+    color_end <- 256
+  }else{
+    color_end <- round((max_val/65000) * 256)
+  }
+  color_scale <- color_scale[1:color_end]
+  
+  image(mat_data, 
+          axes=FALSE, 
+          col = color_scale, 
+          xlab='Assay', 
+          ylab='Sample')
+}
+
+
+# make a subset of the data frames for plotting
+rox_data.df <- all.df[, which(names(all.df) %in% c('assay_well', 'sample_well', 'rox_cycle_15'))]
+fam_data.df <- all.df[, which(names(all.df) %in% c('assay_well', 'sample_well', 'fam_cycle_15'))]
+
+# make wide format
+rox_data_wide.df <- dcast(rox_data.df, assay_well ~ sample_well, value.var='rox_cycle_15')
+fam_data_wide.df <- dcast(fam_data.df, assay_well ~ sample_well, value.var='fam_cycle_15')
+
+# use first column as row names
+rox.mat_data <- data.matrix(rox_data_wide.df[, 2:length(names(rox_data_wide.df))]) 
+rnames <- rox_data_wide.df[,'assay_well']   # assign labels in the "File" column to "rnames"
+rownames(rox.mat_data) <- rnames 
+
+fam.mat_data <- data.matrix(fam_data_wide.df[, 2:length(names(fam_data_wide.df))]) 
+rnames <- fam_data_wide.df[,'assay_well']   # assign labels in the "File" column to "rnames"
+rownames(fam.mat_data) <- rnames 
+
+
+# Now make the heatmap
+myImagePlot(rox.mat_data, title=('ROX channel'))
+myImagePlot(fam.mat_data, title=('FAM channel'))
+```
+
+
+
+
+
+
+Let's first just have a look at all the ROX and FAM channel data.
+
+```{r}
+plot(all.df$rox_cycle_15,
+     ylab='Signal in the ROX channel (fluorescence)')
+
+plot(all.df$fam_cycle_15,
+     ylab='Signal in the FAM channel (fluorescence)')
+```
+
+Not much to be said except that there is more extreme values in the ROX channel than in the FAM channel. So we're mesauring something...
+
+
+
+First, let's see what the fluorescein loading control looks like.
+
+```{r}
+hist(all.df[all.df$sample_tween_conc==0.1, ]$fam_cycle_15, 
+     main='Loading control visualzation for the Tween/Triton 0.1 condition',
+     xlab='Signal in the FAM channel (fluorescence)')
+
+
+hist(all.df[all.df$sample_tween_conc==0.01, ]$fam_cycle_15, 
+     main='Loading control visualzation for the Tween/Triton 0.01 condition',
+     xlab='Signal in the FAM channel (fluorescence)')
+
+
+```
+
+This looks good. Any bad loading should lead to half the signal. I don't seem to see that. Both Tween/Triton conditions seem to work well for loading.
+
+
+Next let's compare whether the sample tween concentration had an effect on the enzyme.
+
+```{r}
+ggplot(all.df, aes(x=final_enzyme_conc, y=rox_cycle_15, shape = factor(sample_tween_conc), color = factor(sample_tween_conc)))+
+    geom_point() + 
+    scale_color_manual(values = c('0.01' = 'darkorange2', '0.1' = 'darkgreen'), name='Tween and Triton conc.') + 
+    scale_shape_manual(values = c('0.01' = 21, '0.1' = 25), name='Tween and Triton conc.') +
+    ggtitle('LOX dilution series in different detergents, activity with three substrates') +
+    xlab('Final enzyme concentration (mU/mL)') + 
+    ylab('Signal in ROX channel (fluorescence)') +
+    facet_grid(~final_substrate_name)
+
+```
+
+It seems that the higher Tween and Triton concentrations give more concistent data with lactate. But at the same time it also gives a higher background with glycolate and no substrate. Maybe it's better to use the lower concentration to get more variable data but with a lower baseline?
+
+
+Now I want to see whether the BSA on the assay side had any effect. I was worried that the peroxidase would adsorb to the channels and addped BSA to mitigate this.
+
+```{r}
+ggplot(all.df, aes(x=final_enzyme_conc, y=rox_cycle_15, shape = factor(final_bsa_conc), color = factor(final_bsa_conc)))+
+    geom_point() + 
+    scale_color_manual(values = c('0' = 'darkorange2', '0.02' = 'darkgreen'), name='BSA conc.') + 
+    scale_shape_manual(values = c('0' = 21, '0.02' = 25), name='BSA conc.') +
+    ggtitle('LOX dilution series in different detergents, activity with three substrates') +
+    xlab('Final enzyme concentration (mU/mL)') + 
+    ylab('Signal in ROX channel (fluorescence)') +
+    facet_grid(~final_substrate_name)
+```
+
+
+The BSA has absolutely no effect on the assays (compare orange and green). So peroxidase adsorption is not a problem it seems. In each plot there are two curves, but these are a result of the tween/triton concentration experiment (see plot above).
+
+
+
+
+We did do "kinetic" measurements of the enzymes. Meeaning that we cycled 15 times at 20C for 1 minute. That gives us 15 measurements of fluorescence. I'm interested in seeing whether we can actually see signal increase over time.
+
+
+
+```{r}
+
+# subset the data
+rox_data.df <- all.df[, which(names(all.df) %in% c('assay_substrate_name', 'final_bsa_conc', 'sample_tween_conc', 'sample_enzyme_conc', 'rox_cycle_1', 'rox_cycle_2', 'rox_cycle_3', 'rox_cycle_4', 'rox_cycle_5', 'rox_cycle_6', 'rox_cycle_7', 'rox_cycle_8', 'rox_cycle_9', 'rox_cycle_10', 'rox_cycle_11', 'rox_cycle_12', 'rox_cycle_13', 'rox_cycle_14', 'rox_cycle_15'))]
+fam_data.df <- all.df[, which(names(all.df) %in% c('assay_substrate_name', 'final_bsa_conc', 'sample_tween_conc', 'sample_enzyme_conc', 'fam_cycle_1', 'fam_cycle_2', 'fam_cycle_3', 'fam_cycle_4', 'fam_cycle_5', 'fam_cycle_6', 'fam_cycle_7', 'fam_cycle_8', 'fam_cycle_9', 'fam_cycle_10', 'fam_cycle_11', 'fam_cycle_12', 'fam_cycle_13', 'fam_cycle_14', 'fam_cycle_15'))]
+
+
+# I need to convert the data from wide format to long format
+rox_data_long.df <- melt(rox_data.df, id=c('assay_substrate_name', 'final_bsa_conc', 'sample_tween_conc', 'sample_enzyme_conc')) 
+fam_data_long.df <- melt(fam_data.df, id=c('assay_substrate_name', 'final_bsa_conc', 'sample_tween_conc', 'sample_enzyme_conc')) 
+
+# Convert the cycle number from text to ints
+rox_data_long_cycles.df <- rox_data_long.df
+rox_data_long_cycles.df$variable <- as.numeric(gsub("rox_cycle_", '', rox_data_long.df$variable) )
+
+fam_data_long_cycles.df <- fam_data_long.df
+fam_data_long_cycles.df$variable <- as.numeric(gsub("fam_cycle_", '', fam_data_long.df$variable) )
+ 
+
+# Done. Ready to plot now
+ggplot(rox_data_long_cycles.df[rox_data_long_cycles.df$sample_tween_conc == 0.01, ], aes(x=variable, y=value, shape = factor(sample_enzyme_conc), color = factor(sample_enzyme_conc)))+
+    geom_point() + 
+    guides(color=guide_legend(title="Enzyme mU/mL")) +
+    guides(shape=guide_legend(title="Enzyme mU/mL")) +
+    ggtitle('LOX dilution series in Tween/Triton 0.01, activity with three substrates') +
+    xlab('Cycle (minutes)') + 
+    ylab('Signal in ROX channel (fluorescence)') +
+    facet_grid(~assay_substrate_name)
+
+ggplot(rox_data_long_cycles.df[rox_data_long_cycles.df$sample_tween_conc == 0.1, ], aes(x=variable, y=value, shape = factor(sample_enzyme_conc), color = factor(sample_enzyme_conc)))+
+    geom_point() + 
+    guides(color=guide_legend(title="Enzyme mU/mL")) +
+    guides(shape=guide_legend(title="Enzyme mU/mL")) +
+    ggtitle('LOX dilution series in Tween/Triton 0.1, activity with three substrates') +
+    xlab('Cycle (minutes)') + 
+    ylab('Signal in ROX channel (fluorescence)') +
+    facet_grid(~assay_substrate_name)
+
+```
+
+
+This looks really nice! Seems like at least in the flex six we can get kinetics if the use the correct enzyme concnetration.

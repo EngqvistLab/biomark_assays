@@ -1,0 +1,263 @@
+---
+output:
+  html_document: default
+  pdf_document: default
+---
+
+---
+title: "Resorufin standard curve, measured in microtiter plate"
+output: html_notebook
+---
+
+Copyright (C) 2020  Martin Engqvist Lab
+
+
+
+
+## Experiment
+.....
+
+
+
+```{r setup}
+
+#make sure the packages are installed
+wants <- c('dplyr', 'reshape2', 'ggplot2', 'tidyverse', 'assertthat')
+has   <- wants %in% rownames(installed.packages())
+if(any(!has)) install.packages(wants[!has], repos="http://ftp.acc.umu.se/mirror/CRAN/")
+
+#load all the packages
+lapply(wants, require, character.only = TRUE)
+
+
+#find the "code" directory, this should be one folder away from the project root
+while (basename(getwd()) != 'code'){
+  setwd("../")
+  if (getwd() == '/'){
+    quit(status = 1)
+  }
+}
+
+#go one folder up and set as project root directory
+setwd("../")
+PROJ <- getwd()
+setwd(paste0(PROJ, '/data/'))
+
+#set folder paths relative to the project root
+CURRENT <- getwd()
+DATA <- getwd()
+RAW_EXTERNAL <- paste0(DATA, '/raw_external/')
+RAW_INTERNAL <- paste0(DATA, '/raw_internal/')
+INTERMEDIATE = paste0(DATA, '/intermediate/')
+FINAL = paste0(DATA, '/final/')
+
+RESULTS <- paste0(PROJ, '/results/')
+FIGURES <- paste0(RESULTS, 'figures/')
+PICTURES <- paste0(RESULTS, 'pictures/')
+
+THIS_PROJECT_FOLDER <- 'resorufin_std_curves'
+
+```
+
+
+
+Setup plotting preferences
+
+```{r}
+font_size = 7
+plt_height = 65
+plt_width = 89
+line_size = 0.5
+line_width <- 0.5
+error_size = 0.25
+pd = position_dodge(0.9)
+
+gen_col = '#141A46'
+nat_col = '#EC8B5E'
+neg_col = '#868686'
+
+
+
+ggplot_theme <- theme(text = element_text( size=font_size), 
+                      axis.text.x = element_text(angle = 0, hjust = 1, size=font_size),
+                      axis.text.y = element_text(size=font_size),
+                      axis.line = element_line(color = "black", size=line_size),
+                      axis.ticks.x = element_line(color = 'black', size=line_size),
+                      axis.ticks.y = element_line(color = 'black', size=line_size),
+                      #legend.text = element_text( size=font_size),
+                      legend.position = c(0, 1),
+                      legend.justification = c(0, 1),
+                      legend.background = element_blank(),
+                      legend.direction = 'horizontal',
+                      legend.text=element_text(size=font_size),
+                      plot.title = element_text( size=font_size),
+                      panel.background = element_blank(),
+                      panel.border = element_rect(color = 'black', size=line_size),
+                      #panel.margin = 
+                      panel.grid.major = element_blank(), 
+                      panel.grid.minor = element_blank(),
+                      panel.grid.major.x = element_blank(), 
+                      panel.grid.major.y = element_blank(), 
+                      panel.grid.minor.x = element_blank(), 
+                      panel.grid.minor.y = element_blank() 
+)
+```
+
+
+## Load the data
+```{r}
+
+data.df <- read.table(paste(RAW_INTERNAL, THIS_PROJECT_FOLDER, 'normal_plate_std_curve.tsv', sep='/'), sep='\t', header=TRUE)
+
+head(data.df)
+tail(data.df)
+
+
+```
+
+
+
+Convert data to long format
+
+```{r}
+data.df.long <- melt(data.df, id=c('resorufin_conc', 'units')) 
+colnames(data.df.long) <- c('resorufin_conc', 'resorufin_conc_unit', 'repeat_num', 'fluorescence')
+
+# convert repeat to numeric
+data.df.long$repeat_num <- as.integer(gsub('rep', '', data.df.long$repeat_num))
+
+# and fluorescence to double
+data.df.long$fluorescence <- as.numeric(data.df.long$fluorescence)
+
+head(data.df.long)
+tail(data.df.long)
+```
+
+
+
+## Plotting results
+Time to plot!
+
+
+First we plot the raw values observed in all the wells
+
+```{r}
+in_data <- data.df.long
+ggplot(in_data, aes(x=resorufin_conc, y=fluorescence, color=factor(resorufin_conc)))+
+    theme_bw() +
+    geom_point(cex=0.5) + 
+    ggtitle('Raw data') +
+    xlab('Concentration (uM)') + 
+    ylab('Fluorescence') +
+    facet_grid(repeat_num ~ .)
+
+```
+Concentrations above 5 uM are very clearly too high. The curve is not linear any more. Let's remove value above and re-plot.
+
+
+
+Remove the high range data since this reaches a plateau
+
+```{r}
+all.df.subset <- data.df.long[data.df.long$resorufin_conc <= 5, ]
+
+in_data <- all.df.subset
+ggplot(in_data, aes(x=resorufin_conc, y=fluorescence, color=factor(resorufin_conc)))+
+    theme_bw() +
+    geom_point(cex=0.5) + 
+    ggtitle('Raw data') +
+    xlab('Concentration (uM)') + 
+    ylab('Fluorescence') +
+    facet_grid(repeat_num ~ .)
+
+```
+This looks good!
+
+
+
+Let's look at the low range values, just to see what's going on.
+
+```{r}
+
+in_data <- all.df.subset[all.df.subset$fluorescence < 2500, ]
+ggplot(in_data, aes(x=resorufin_conc, y=fluorescence, color=factor(resorufin_conc)))+
+    theme_bw() +
+    geom_point(cex=0.5) + 
+    ggtitle('Raw data') +
+    xlab('Concentration (uM)') + 
+    ylab('Fluorescence') +
+    facet_grid(repeat_num ~ .)
+```
+Looks nice and tidy!
+
+
+
+
+
+Fit a linear regression for all the data together
+
+```{r}
+
+# plot with a linear regression
+
+in_data <- all.df.subset
+
+# Fit a linear regression to get the slope.
+# make a model for only repeat 1 of the low range
+model <- lm(in_data$fluorescence ~ in_data$resorufin_conc)
+
+all_intercept <- coef(model)[[1]]
+all_slope <- coef(model)[[2]]
+all_fit <- summary(model)$r.squared
+
+#model
+print('Repeat 1, low range')
+sprintf('Intercept: %s', all_intercept)
+sprintf('Slope: %s', all_slope)
+sprintf('R2: %s', all_fit)
+print('')
+
+# plot the graph
+p1 <- ggplot(in_data, aes(x=resorufin_conc, y=fluorescence)) +
+    theme_bw() +
+    ggplot_theme +
+    geom_smooth(method = 'lm', se = FALSE) +
+    geom_point(cex=1.0, alpha=0.5, shape=16) + 
+    ggtitle('Plate reader') +
+    xlab(expression(paste('Resorufin (', mu, 'M', ')') ) ) + 
+    ylab('Fluorescence') + 
+    annotate("text", 
+            x = 0, 
+            y = max(in_data$fluorescence)*0.95, 
+            label = as.expression(bquote(italic(R)^{2} ~ '=' ~ .(formatC(all_fit, format='g', digits=3)))), 
+            size=2,
+            hjust=0,
+            vjust=0) + 
+  
+    annotate("text", 
+            x = 0, 
+            y = max(in_data$fluorescence)*0.85, 
+            label = as.expression(bquote('y' ~ '=' ~ .(formatC(all_slope, format='g', digits=3)) ~ 'x + ' ~ .(formatC(all_intercept, format='g', digits=3)))), 
+            size=2,
+            hjust=0,
+            vjust=0)
+
+p1
+
+# save the figure
+fname = paste(FIGURES, sprintf('resorufin_standard_curve_plate_reader.pdf'), sep='/')
+ggsave(filename=fname, plot=p1, width = 65, height = 50, units=c('mm'))
+```
+
+
+
+
+
+Print out the parameters
+
+```{r}
+print('Standard curve according to: y = kx + m')
+sprintf('y = %sx + %s    with an R2 of %s', round(all_slope), round(all_intercept), round(all_fit, 3))
+```
+
+

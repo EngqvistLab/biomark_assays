@@ -1,0 +1,326 @@
+---
+output:
+  html_document: default
+  pdf_document: default
+---
+
+
+---
+title: "First test of BioMark for enzyme assays"
+output: html_notebook
+---
+
+Copyright (C) 2018  Martin Engqvist Lab
+
+  
+  
+## Experiment
+This is an initial test where the instruments sensitivity toward the two dyes is tested. We are also interested in the linearety of the detection. The two dyes are fluorescein (FAM channel) and resurofin (ROX channel). Resurofin is the fluorescent molecule that will be produced in our enzyme reactions from an amplex red precursor. The fluorescein will act as a loading control in later experiments. The resurofin is actually the product that our enzymes will produce if active. In addition to this we are unsure of the Tween and Triton concentrations to be used so we test using either 0.1% or 0.01% (v/v) of both detergents on both the assay and substrate sides. Fluorescein was loaded on the assay side and resurofin was loaded on the sample side.
+
+Experimental data collected on 301018 (DDMMYY) in Petter Wolls group at Karolinska using a BioMark instrument.
+  
+
+```{r setup}
+
+#make sure the packages are installed
+wants <- c('dplyr', 'reshape2', 'ggplot2')
+has   <- wants %in% rownames(installed.packages())
+if(any(!has)) install.packages(wants[!has], repos="http://ftp.acc.umu.se/mirror/CRAN/")
+
+#load all the packages
+lapply(wants, require, character.only = TRUE)
+
+
+#find the "code" directory, this should be one folder away from the project root
+while (basename(getwd()) != 'code'){
+  setwd("../")
+  if (getwd() == '/'){
+    quit(status = 1)
+  }
+}
+
+#go one folder up and set as project root directory
+setwd("../")
+PROJ <- getwd()
+setwd(paste0(PROJ, '/data/'))
+
+#set folder paths relative to the project root
+CURRENT <- getwd()
+DATA <- getwd()
+RAW_EXTERNAL <- paste0(DATA, '/raw_external/')
+RAW_INTERNAL <- paste0(DATA, '/raw_internal/')
+INTERMEDIATE = paste0(DATA, '/intermediate/')
+FINAL = paste0(DATA, '/final/')
+
+RESULTS <- paste0(PROJ, '/results/')
+FIGURES <- paste0(RESULTS, 'figures/')
+PICTURES <- paste0(RESULTS, 'pictures/')
+```
+
+
+
+## Setup
+
+Let's input the experimental paramenters for sample and assay sides
+```{r}
+# Test 1
+
+assay.df <- data.frame('assay_well'=c('A01','A02','A03','A04','A05','A06','A07','A08','A09','A10','A11','A12'),
+                       'assay_tween_conc'=c(0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1),
+                       'assay_tween_unit'=c('% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)'),
+                       'assay_triton_conc'=c(0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1),
+                       'assay_triton_unit'=c('% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)'),
+                       'assay_fluorescein_conc'=c(0.0, 1.0, 5.0, 10.0, 50.0, 100.0, 0.0, 1.0, 5.0, 10.0, 50.0, 100.0),
+                       'assay_fluorescein_unit'=c('uM', 'uM', 'uM', 'uM', 'uM', 'uM', 'uM', 'uM', 'uM', 'uM', 'uM', 'uM'),
+                       'assay_resurofin_conc'=c(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+                       'assay_resurofin_unit'=c('uM', 'uM', 'uM', 'uM', 'uM', 'uM', 'uM', 'uM', 'uM', 'uM', 'uM', 'uM'))
+
+
+sample.df <- data.frame('sample_well'=c('S01','S02','S03','S04','S05','S06','S07','S08','S09','S10','S11','S12'),
+                        'sample_tween_conc'=c(0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1),
+                        'sample_tween_unit'=c('% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)'),
+                        'sample_triton_conc'=c(0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1),
+                        'sample_triton_unit'=c('% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)', '% (v/v)'),
+                        'sample_fluorescein_conc'=c(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+                        'sample_fluorescein_unit'=c('uM', 'uM', 'uM', 'uM', 'uM', 'uM', 'uM', 'uM', 'uM', 'uM', 'uM', 'uM'),
+                        'sample_resurofin_conc'=c(0.0, 0.5, 1.0, 5.0, 10.0, 50.0, 0.0, 0.5, 1.0, 5.0, 10.0, 50.0),
+                        'sample_resurofin_unit'=c('uM', 'uM', 'uM', 'uM', 'uM', 'uM', 'uM', 'uM', 'uM', 'uM', 'uM', 'uM'))
+
+
+head(assay.df)
+head(sample.df)
+```
+
+
+
+Alright, this looks good. Let's now make all combinations of sample and assay ("mixing" them).
+
+
+```{r}
+# make all combinations of wells
+mixed.df <- expand.grid(sample.df$sample_well, assay.df$assay_well)
+
+# fix the colnames
+colnames(mixed.df) <- c('sample_well', 'assay_well')
+
+# add in the original data
+mixed.df <- merge(mixed.df, sample.df, by='sample_well')
+mixed.df <- merge(mixed.df, assay.df, by='assay_well')
+
+
+# calculate final concentrations
+mixed.df$final_well <- paste(mixed.df$sample_well, mixed.df$assay_well, sep='-')
+
+mixed.df$final_fluorescein_conc <- mixed.df$assay_fluorescein_conc/10 + mixed.df$sample_fluorescein_conc/1.1
+mixed.df$final_fluorescein_unit <- mixed.df$assay_fluorescein_unit
+mixed.df$final_resurofin_conc <- mixed.df$assay_resurofin_conc/10 + mixed.df$sample_resurofin_conc/1.1
+mixed.df$final_resurofin_unit <- mixed.df$assay_resurofin_unit
+
+head(mixed.df)
+tail(mixed.df)
+```
+
+
+## Loading data
+
+So now we have the conditions in the final wells. Time to load up the measured data.
+From the data file that goes with this script (1_BioMark_test1_1530021086_raw.csv) I manually exported the ROX and FAM signal separately to tsv files. Load the data and then combine with my condition file.
+```{r}
+
+
+# read the experimental data obtained from the BioMark
+rox.df <- read.table(paste(INTERMEDIATE, 'flex_six_first_test', 'Array_1', '3_BioMark_test1_1530021086_ROX.tsv', sep='/'), sep='\t', header=TRUE)
+colnames(rox.df) <- c('final_well', 'rox')
+
+fam.df <- read.table(paste(INTERMEDIATE, 'flex_six_first_test', 'Array_1', '4_BioMark_test1_1530021086_FAM.tsv', sep='/'), sep='\t', header=TRUE)
+colnames(fam.df) <- c('final_well', 'fam')
+
+
+# Add the data into my frame with concentration info
+all.df <- merge(mixed.df, rox.df, by='final_well')
+all.df <- merge(all.df, fam.df, by='final_well')
+
+head(all.df)
+```
+
+
+Looks good! Let's export this to a flatfile for future use.
+
+
+```{r}
+write.table(all.df, file=paste(FINAL, 'flex_six_first_test', 'array_1_all_data_combined.tsv', sep='/'), sep='\t', row.names=FALSE)
+```
+
+
+
+## Plotting results
+
+Time to plot!
+
+
+
+```{r}
+
+
+# ----- Define a function for plotting a matrix ----- #
+# from http://www.phaget4.org/R/image_matrix.html
+myImagePlot <- function(x, ...){
+     min <- 0
+     max <- 65000
+     yLabels <- rownames(x)
+     xLabels <- colnames(x)
+     title <-c()
+  # check for additional function arguments
+  if( length(list(...)) ){
+    Lst <- list(...)
+    if( !is.null(Lst$zlim) ){
+       min <- Lst$zlim[1]
+       max <- Lst$zlim[2]
+    }
+    if( !is.null(Lst$yLabels) ){
+       yLabels <- c(Lst$yLabels)
+    }
+    if( !is.null(Lst$xLabels) ){
+       xLabels <- c(Lst$xLabels)
+    }
+    if( !is.null(Lst$title) ){
+       title <- Lst$title
+    }
+  }
+# check for null values
+if( is.null(xLabels) ){
+   xLabels <- c(1:ncol(x))
+}
+if( is.null(yLabels) ){
+   yLabels <- c(1:nrow(x))
+}
+
+layout(matrix(data=c(1,2), nrow=1, ncol=2), widths=c(4,1), heights=c(1,1))
+
+ # Red and green range from 0 to 1 while Blue ranges from 1 to 0
+ ColorRamp <- colorRampPalette(c('#222222', '#EEEEEE'))(n = 256)
+ ColorLevels <- seq(min, max, length=length(ColorRamp))
+
+ # Reverse Y axis
+ reverse <- nrow(x) : 1
+ yLabels <- yLabels[reverse]
+ x <- x[reverse,]
+
+ # Data Map
+ par(mar = c(3,5,2.5,2))
+ image(1:length(xLabels), 1:length(yLabels), t(x), col=ColorRamp, xlab="",
+ ylab="", axes=FALSE, zlim=c(min,max))
+ if( !is.null(title) ){
+    title(main=title)
+ }
+axis(BELOW<-1, at=1:length(xLabels), labels=xLabels, cex.axis=0.7)
+ axis(LEFT <-2, at=1:length(yLabels), labels=yLabels, las= HORIZONTAL<-1,
+ cex.axis=0.7)
+
+ # Color Scale
+ par(mar = c(3,2.5,2.5,2))
+ image(1, ColorLevels,
+      matrix(data=ColorLevels, ncol=length(ColorLevels),nrow=1),
+      col=ColorRamp,
+      xlab="",ylab="",
+      xaxt="n")
+
+ layout(1)
+}
+# ----- END plot function ----- #
+
+
+
+make_heatmap <- function(mat_data){
+
+  color_scale <- colorRampPalette(c('#1A1A1A', '#EEEEEE'))(n = 256)
+  
+  # adjust the color scale. Max value sems to be around 65,000
+  max_val <- max(mat_data)
+  if (max_val > 65000){
+    color_end <- 256
+  }else{
+    color_end <- round((max_val/65000) * 256)
+  }
+  color_scale <- color_scale[1:color_end]
+  
+  image(mat_data, 
+          axes=FALSE, 
+          col = color_scale, 
+          xlab='Assay', 
+          ylab='Sample')
+}
+
+
+# make a subset of the data frames for plotting
+rox_data.df <- all.df[, which(names(all.df) %in% c('assay_well', 'sample_well', 'rox'))]
+fam_data.df <- all.df[, which(names(all.df) %in% c('assay_well', 'sample_well', 'fam'))]
+
+# make wide format
+rox_data_wide.df <- dcast(rox_data.df, assay_well ~ sample_well, value.var='rox')
+fam_data_wide.df <- dcast(fam_data.df, assay_well ~ sample_well, value.var='fam')
+
+# use first column as row names
+rox.mat_data <- data.matrix(rox_data_wide.df[, 2:length(names(rox_data_wide.df))]) 
+rnames <- rox_data_wide.df[,'assay_well']   # assign labels in the "File" column to "rnames"
+rownames(rox.mat_data) <- rnames 
+
+fam.mat_data <- data.matrix(fam_data_wide.df[, 2:length(names(fam_data_wide.df))]) 
+rnames <- fam_data_wide.df[,'assay_well']   # assign labels in the "File" column to "rnames"
+rownames(fam.mat_data) <- rnames 
+
+
+# Now make the heatmap
+myImagePlot(rox.mat_data, title=('ROX channel'))
+myImagePlot(fam.mat_data, title=('FAM channel'))
+```
+
+
+
+Let's plot all the ROX and FAM channel data.
+
+```{r}
+plot(all.df$rox,
+     ylab='Signal in the ROX channel (fluorescence)')
+
+plot(all.df$fam,
+     ylab='Signal in the FAM channel (fluorescence)')
+```
+
+
+
+
+
+Now I want to see whether the resurofin is linear and whether the two Triton/Tween concentrations affect this linearity. Resurofin was loaded on the sample side. 
+
+```{r}
+
+ggplot(all.df, aes(x=final_resurofin_conc, y=rox, shape = factor(sample_tween_conc), color = factor(sample_tween_conc)))+
+    geom_point() + 
+    scale_color_manual(values = c('0.01' = 'darkorange2', '0.1' = 'darkgreen'), name='Tween and Triton conc.') + 
+    scale_shape_manual(values = c('0.01' = 21, '0.1' = 25), name='Tween and Triton conc.') +
+    ggtitle('Resurofin dilution series in different detergents') +
+    xlab('Final resurofin concentration (uM)') + 
+    ylab('Signal in ROX channel (fluorescence)') 
+
+```
+
+It appears that the assay is rubust and that tween and triton does not really affect the fluorescence of resurofine. The response is not really linear though. For applications this is not a concern. The detection is good, however, with 0.1 uM being readily detected.
+
+
+
+Let's take a look at fluorescein now.
+
+```{r}
+
+ggplot(all.df, aes(x=final_fluorescein_conc, y=fam, shape = factor(sample_tween_conc), color = factor(sample_tween_conc)))+
+    geom_point() + 
+    scale_color_manual(values = c('0.01' = 'darkorange2', '0.1' = 'darkgreen'), name='Tween and Triton conc.') + 
+    scale_shape_manual(values = c('0.01' = 21, '0.1' = 25), name='Tween and Triton conc.') +
+    ggtitle('Fluorescein dilution series in different detergents') +
+    xlab('Final fluorescein concentration (uM)') + 
+    ylab('Signal in FAM channel (fluorescence)') 
+
+```
+
+There is certainly more of a spread here. If anything high detergent concentrations appear to disrupt the measurements. The detection is not linear at all. Both 0.1 and 0.5 uM are readily detectable. We decided to use 0.1 uM for fluorescein (final concentration) as loading control on both sample and assay side going forward. Missed loading can be detected as the signal should be halved.
