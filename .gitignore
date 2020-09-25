@@ -2,6 +2,7 @@
 data/raw_internal/other/
 data/intermediate/other/
 data/final/other/
+doc/journal_paper/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

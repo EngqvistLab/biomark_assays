@@ -1,0 +1,1 @@
+The data in the files `1530021086_chip_1_array_2` and `LOX_optimization` is identical. The only difference is that additional information regarding the reaction conditions has been added to the `LOX_optimization` files. This was done to facilitate analysis.
