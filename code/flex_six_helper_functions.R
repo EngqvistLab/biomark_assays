@@ -5,7 +5,7 @@ require(tidyverse)
 require(dplyr)
 require(reshape2)
 
-VERSION <- '0.2.1'
+VERSION <- '0.2.2'
 
 
 
@@ -134,7 +134,8 @@ myImagePlot <- function(x, min, max, ...){
   layout(matrix(data=c(1,2), nrow=1, ncol=2), widths=c(4,1), heights=c(1,1))
   
   # Red and green range from 0 to 1 while Blue ranges from 1 to 0
-  ColorRamp <- colorRampPalette(c('#222222', '#EEEEEE'))(n = 256)
+  num_cols = 256
+  ColorRamp <- colorRampPalette(c('#222222', '#EEEEEE'))(n = num_cols)
   ColorLevels <- seq(min, max, length=length(ColorRamp))
   
   # Reverse Y axis
@@ -142,9 +143,21 @@ myImagePlot <- function(x, min, max, ...){
   yLabels <- yLabels[reverse]
   x <- x[reverse,]
   
+  # Add a separate color for removed samples, by adding another "step" to the color palette
+  zstep <- (max - min) / num_cols # step in the color palette
+  newz.na <- max + zstep # the value for na will be one step above the current max
+  max <- max + zstep # extend top limit to include the two new values above and na
+  na.color = 'red'
+  
+  # find NA and prelace these with the new value
+  x[which(is.na(x))] <- newz.na # same for newz.na
+  
+  # add the NA color to the color ramp
+  col <- c(ColorRamp, na.color) # we construct the new color range by including: na.color and na.outside
+  
   # Data Map
   par(mar = c(3,5,2.5,2))
-  image(1:length(xLabels), 1:length(yLabels), t(x), col=ColorRamp, xlab="",
+  image(1:length(xLabels), 1:length(yLabels), t(x), col=col, xlab="",
         ylab="", axes=FALSE, zlim=c(min,max))
   if( !is.null(title) ){
     title(main=title)
@@ -154,10 +167,11 @@ myImagePlot <- function(x, min, max, ...){
        cex.axis=0.7)
   
   # Color Scale
+  ColorLevels <- seq(min, max, length=length(col))
   par(mar = c(3,2.5,2.5,2))
   image(1, ColorLevels,
-        matrix(data=ColorLevels, ncol=length(ColorLevels),nrow=1),
-        col=ColorRamp,
+        matrix(data=ColorLevels, ncol=length(ColorLevels), nrow=1),
+        col=col,
         xlab="",ylab="",
         xaxt="n")
   
@@ -191,15 +205,15 @@ plot_raw_data_heatmaps <- function(df, min=0, max=65000){
     
     
     # Now make the heatmap
-    myImagePlot(rox.mat_data, min=0, max=65000, title=(sprintf('ROX channel, cycle %s', cycle)))
-    myImagePlot(fam.mat_data, min=0, max=65000, title=(sprintf('FAM channel, cycle %s', cycle)))
+    myImagePlot(rox.mat_data, min=0, max=68000, title=(sprintf('ROX channel, cycle %s', cycle)))
+    myImagePlot(fam.mat_data, min=0, max=68000, title=(sprintf('FAM channel, cycle %s', cycle)))
   }
 }
 
 
 
 subtract_no_enz_fluorescence <- function(df){
-  ## subtract fluorescence from no enzyme control  ##
+  ## subtract fluorescence of no enzyme control  ##
   
   # first get the values from control
   control.df <- df[df$final_enzyme_conc==0, c('cycle', 'assay_enzyme', 'sample_substrate', 'sample_substrate_conc', 'repeat_num', 'rox_value')]
@@ -227,6 +241,38 @@ subtract_no_enz_fluorescence <- function(df){
   return(small.df)
 }
 
+
+
+trim_data_low_range <- function(df, tolerance_at_zero){
+  # remove samples where no activity is seen, within a certain tolerance #
+
+  # what's the maximum value observed in the measurements
+  max_val = max(concentration.df$resorufin_value_norm)
+
+  # find which enzyme-substrate concentrations give no perceptibel activity (within a tolerance level)
+  no_activity.df <- concentration.df %>%
+    group_by(assay_well, sample_well) %>%
+    summarize(assay_enzyme = list(assay_enzyme),
+              final_enzyme_conc = list(final_enzyme_conc),
+              final_enzyme_unit = list(final_enzyme_unit),
+              sample_substrate = list(sample_substrate),
+              final_substrate_conc = list(final_substrate_conc),
+              final_substrate_unit = list(final_substrate_unit),
+              minutes = list(minutes),
+              repeat_num = list(repeat_num),
+              final_substrate_norm_unit = list(final_substrate_norm_unit),
+              resorufin_value_norm = list(resorufin_value_norm),
+              resorufin_value_norm_unit = list(resorufin_value_norm_unit)
+    ) 
+  
+  # now actually filter out the bad samples
+  without_no_activity.df <- no_activity.df[sapply(no_activity.df$resorufin_value_norm, max) > 0 + tolerance_at_zero * max_val, ]
+  
+  # unbundle
+  unbundled.df <- unnest(without_no_activity.df)
+  
+  return(unbundled.df)
+}
 
 
 fluorescence_to_concentration <- function(df, chip_type){
@@ -279,6 +325,7 @@ compute_slopes <- function(df){
     summarize(minutes=list(minutes), 
               resorufin_value_norm=list(resorufin_value_norm),
               resorufin_value_norm_unit=list(resorufin_value_norm_unit)) %>%
+    filter(sapply(resorufin_value_norm, length) != 0) %>%
     mutate(slope = coef( lm(unlist(resorufin_value_norm)~unlist(minutes)) )[2],
            slope_unit = sprintf('%s min^-1', unique(unlist(resorufin_value_norm_unit))),
            r2 = summary( lm(unlist(resorufin_value_norm)~unlist(minutes)) )$r.squared,
@@ -308,7 +355,7 @@ plot_slope_data_heatmaps <- function(df){
   
   
   # Now make the heatmap to show the slope
-  myImagePlot(mat_data, max=max(mat_data), min=min(mat_data), title=('Slope (linear model)'))
+  myImagePlot(mat_data, max=max(mat_data, na.rm=TRUE), min=0, title=('Slope (linear model)'))
   
   
   ### Plotting R2 of linear model (to assess the quality of the fit) ###
@@ -326,7 +373,7 @@ plot_slope_data_heatmaps <- function(df){
   rownames(mat_data) <- rnames 
   
   # Now make the heatmap
-  myImagePlot(mat_data, max=max(mat_data), min=min(mat_data), title=('R2 of slope (linear model fit)'))
+  myImagePlot(mat_data, max=max(mat_data, na.rm=TRUE), min=0, title=('R2 of slope (linear model fit)'))
   
   
   ### plotting spearman correlation ###
@@ -344,23 +391,20 @@ plot_slope_data_heatmaps <- function(df){
   rownames(mat_data) <- rnames 
   
   # Now make the heatmap
-  myImagePlot(mat_data, max=max(mat_data), min=min(mat_data), title=('Spearman correlation between time and signal'))
+  myImagePlot(mat_data, max=max(mat_data, na.rm=TRUE), min=0, title=('Spearman correlation between time and signal'))
   
 }
 
 
 
 filter_r2 <- function(df, r2_cutoff, corr_cutoff){
-  
-  # sometimes the zero substrate samply shows no correlation since the signal bounces up and down around 0, resulting in the whole enzyme concentration to be needlessly discarded
-  # this also seems to happen at low substrate concentrations in enzymes with poor affinity
-  # to deal with this problem I temporarily set the r2 and correlation to 1 for all reactions with a slope close to 0
-  df[df$slope < 0+0.01*max(df$slope), ]$r2 <- 1 # zero plus 1% of max value
-  df[df$slope < 0+0.01*max(df$slope), ]$corr <- 1 # zero plus 1% of max value
-  
-  # first I need to bundle all the measurements from each enzyme concentration
+
+  # First I need to bundle all the measurements from each enzyme concentration.
+  # Also remove any samples with less than 5 observations (5 enzyme-substrate combinations),
+  # as this seems like a minium number of data points for a kinetic curve.
   bundled.slopes.df <- df %>%
     group_by(assay_well, final_enzyme_conc, repeat_num, assay_enzyme, sample_substrate) %>%
+    filter(sapply(list(slope), length) >= 5) %>%
     summarize(final_enzyme_unit=list(final_enzyme_unit),
               final_substrate_conc=list(final_substrate_conc),
               final_substrate_unit=list(final_substrate_unit),
@@ -368,6 +412,7 @@ filter_r2 <- function(df, r2_cutoff, corr_cutoff){
               slope_unit=list(slope_unit),
               r2=list(r2),
               corr=list(corr))
+
   
   # now check, for each enzyme concentration, whether any of the R2 scores are below the cutoff
   # a bad R2 score indicates a poor fit of the data to the linear model
@@ -411,17 +456,11 @@ calculate_slope_and_substrate_correlation <- function(df){
 select_best_samples <- function(df){
   # choose the enzyme concentration that gave the best data
   
-  ## The best one from each repeat (may result in two different concentrations being chosen for each repeat) ##
-#  bundled.slopes.nonegs.spearman.max.df <- df %>%
-#    group_by(assay_enzyme, repeat_num, sample_substrate) %>%
-#    top_n(1, slope_spearman_rho) %>%
-#    slice(which.max(slope_spearman_rho))
-  
   
   ## The best one as a maximum sum of all repeats (use best concentration for all repeats) ##
   
   # get sum of spearman rhos
-  sum.df <- bundled.slopes.nonegs.spearman.df %>%
+  sum.df <- df %>%
     group_by(assay_enzyme, final_enzyme_conc, sample_substrate) %>%
     summarise(slope_sum = sum(slope_spearman_rho))
 
@@ -429,9 +468,9 @@ select_best_samples <- function(df){
   best_concentration <- sum.df[which.max(sum.df$slope_sum), ]$final_enzyme_conc
 
   # slice the original data frame
-  bundled.slopes.nonegs.spearman.max.df <- bundled.slopes.nonegs.spearman.df[bundled.slopes.nonegs.spearman.df$final_enzyme_conc == best_concentration, ]
+  max.df <- df[df$final_enzyme_conc == best_concentration, ]
   
-  return(bundled.slopes.nonegs.spearman.max.df)
+  return(max.df)
 }
 
 
@@ -507,7 +546,7 @@ concentration_to_moles <- function(df, chip_type){
     stop(sprintf('Unknown chip: %s', chip_type))
   }
   
-  moles.df <- cbind(df, activity_moles = mapply(function(c) c*reaction_vol, df$activity))
+  moles.df <- cbind(df, activity_moles = mapply(function(c) c*reaction_vol, df$slope))
   moles.df$activity_moles_unit <- 'umol min^-1'
 
   return(moles.df)
@@ -553,11 +592,8 @@ normalize_to_protein <- function(df, chip_type){
 }
 
 
-trim_data_range <- function(df, tolerance_at_zero, tolerance_at_max){
-  
-  # first remove values close to zero
-  df <- df[df$activity_moles_protein > 0 + tolerance_at_zero * max(df$activity_moles_protein), ]
-  
+trim_data_top_range <- function(df, tolerance_at_max){
+
   # drop unnessecary columns
   #smaller.df <- df[, -which(names(df) %in% c('slope', 'slope_unit', 'activity', 'activity_unit', 'activity_moles', 'activity_moles_unit'))]
   
@@ -567,7 +603,7 @@ trim_data_range <- function(df, tolerance_at_zero, tolerance_at_max){
     slice(which.max(activity_moles_protein))
   
   # drop the rox data and rename the substrate concentration column
-  max.df <- max.df[, -which(names(max.df) %in% c('activity', 'activity_unit', 'activity_moles', 'activity_moles_unit', 'activity_moles_protein', 'activity_moles_protein_unit'))]
+  max.df <- max.df[, -which(names(max.df) %in% c('activity_moles', 'activity_moles_unit', 'activity_moles_protein', 'activity_moles_protein_unit'))]
   names(max.df)[grep("final_substrate_conc", colnames(max.df))] <- 'final_substrate_conc_at_max'
   
   # join the data frames
@@ -584,20 +620,10 @@ trim_data_range <- function(df, tolerance_at_zero, tolerance_at_max){
   
   # re-order the data
   small.df <- small.df %>% 
-    select(assay_enzyme, final_enzyme_conc, final_enzyme_unit, sample_substrate, final_substrate_conc, final_substrate_unit, repeat_num, activity, activity_unit, activity_moles, activity_moles_unit, activity_moles_protein, activity_moles_protein_unit)
+    select(assay_enzyme, final_enzyme_conc, final_enzyme_unit, sample_substrate, final_substrate_conc, final_substrate_unit, repeat_num, activity_moles, activity_moles_unit, activity_moles_protein, activity_moles_protein_unit)
   
   return(small.df)
 }
-
-
-
-remove_outliers <- function(df){
-  # remove extreme outliers from data
-  
-  # to be implemented ...
-  return(df)
-}
-
 
 
 
