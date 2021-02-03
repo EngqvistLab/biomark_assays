@@ -1,5 +1,5 @@
-### Microfluidic enzyme assays 
-The Fluidigm Biomark HD microfluidic qPCR system was adapted to carrying out enzyme kinetic studies using a amplex-red based assay. This repository contains data, code and figures used in the study (https://www.biorxiv.org/content/10.1101/2020.09.18.303248v1). 
+### Microfluidic enzyme assays
+The Fluidigm Biomark HD microfluidic qPCR system was adapted to carrying out enzyme kinetic studies using a amplex-red based assay. This repository contains data, code and figures used in the ACS Omega article found here: https://pubs.acs.org/doi/abs/10.1021/acsomega.0c04918 (pre-print available at https://www.biorxiv.org/content/10.1101/2020.09.18.303248v1). The code is free to use and modify under GPLv3, but we do appreciate of you cite our article if you find it useful.
 
 ![Graphical abstract](/results/figures/TOC.png)
 
@@ -36,4 +36,3 @@ The Fluidigm Biomark HD microfluidic qPCR system was adapted to carrying out enz
     │
     └── reports            
         └── figures                  <- Generated graphics and figures to be used in reporting
-
